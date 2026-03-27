@@ -1,37 +1,48 @@
-// Utility function (convenience wrapper) to get an element by its ID
-// It creates a tiny helper so later code can do:
-// $("question") instead of document.getElementById("question")
 const $ = (id) => document.getElementById(id);
+
+// ── Ask question ──────────────────────────────────────────────────────────────
 
 async function askQuestion() {
   const question = $("question").value.trim();
   const answerEl = $("answer");
-  const statusEl = $("status");
+  const statusEl = $("statusText");
+  const askBtn   = $("askBtn");
 
   if (!question) {
-    statusEl.textContent = "Please enter a question.";
+    setStatus(statusEl, "Please enter a question.", "muted");
     return;
   }
 
-  statusEl.textContent = "Working...";
+  askBtn.disabled = true;
   answerEl.textContent = "";
+  answerEl.classList.add("empty");
+  setStatus(statusEl, "thinking", "loading");
 
-  const res = await fetch("/query", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }), // same as { "question": question }
-  });
+  try {
+    const res = await fetch("/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
 
-  if (!res.ok) {
-    const text = await res.text();
-    statusEl.textContent = `Error (${res.status}): ${text}`;
-    return;
+    if (!res.ok) {
+      const text = await res.text();
+      setStatus(statusEl, `Error ${res.status}: ${text}`, "error");
+      return;
+    }
+
+    const data = await res.json();
+    answerEl.textContent = data.answer ?? "";
+    answerEl.classList.remove("empty");
+    setStatus(statusEl, "", "");
+  } catch (e) {
+    setStatus(statusEl, "Request failed. Please try again.", "error");
+  } finally {
+    askBtn.disabled = false;
   }
-
-  const data = await res.json();
-  statusEl.textContent = "";
-  answerEl.textContent = data.answer ?? "";
 }
+
+// ── Upload files ──────────────────────────────────────────────────────────────
 
 async function uploadFiles(files) {
   const formData = new FormData();
@@ -39,10 +50,7 @@ async function uploadFiles(files) {
     formData.append("files", file, file.name);
   }
 
-  const res = await fetch("/upload", {
-    method: "POST",
-    body: formData,
-  });
+  const res = await fetch("/upload", { method: "POST", body: formData });
 
   if (!res.ok) {
     const text = await res.text();
@@ -52,54 +60,80 @@ async function uploadFiles(files) {
   return res.json();
 }
 
-function wireUpload() {
-  const uploadBtn = $("uploadBtn");
-  const fileInput = $("fileInput");
-  const uploadHint = $("uploadHint");
+async function handleFiles(fileList) {
+  const files = Array.from(fileList);
+  const statusEl = $("uploadStatus");
 
-  uploadBtn.addEventListener("click", () => {
-    uploadHint.textContent = "Select files to upload...";
-    fileInput.click();
+  if (files.length === 0) return;
+
+  $("uploadZone").classList.remove("dragging");
+  setUploadStatus(statusEl, `Uploading ${files.length} file(s)…`, "");
+
+  try {
+    const data = await uploadFiles(files);
+    const saved   = data.saved?.length   ?? 0;
+    const skipped = data.skipped?.length ?? 0;
+    const msg = `${saved} file${saved !== 1 ? "s" : ""} uploaded successfully.${
+      skipped ? ` ${skipped} unsupported file${skipped !== 1 ? "s" : ""} skipped.` : ""
+    }`;
+    setUploadStatus(statusEl, msg, "success");
+  } catch (e) {
+    setUploadStatus(statusEl, e?.message ?? "Upload error.", "error");
+  } finally {
+    $("fileInput").value = "";
+  }
+}
+
+// ── Wire-up ───────────────────────────────────────────────────────────────────
+
+function wireUpload() {
+  const zone      = $("uploadZone");
+  const fileInput = $("fileInput");
+
+  // Click-to-open is handled natively by the <label for="fileInput"> in HTML.
+  // JS only needs to handle drag-and-drop and the change event.
+
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files?.length) handleFiles(fileInput.files);
   });
 
-  fileInput.addEventListener("change", async () => {
-    const filesList = fileInput.files ? Array.from(fileInput.files) : [];
-    const filesCount = filesList.length;
+  zone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    zone.classList.add("dragging");
+  });
 
-    if (filesCount === 0) {
-      uploadHint.textContent = "";
-      return;
-    }
+  zone.addEventListener("dragleave", () => zone.classList.remove("dragging"));
 
-    uploadBtn.disabled = true;
-    uploadHint.textContent = `Uploading ${filesCount} file(s)...`;
-
-    try {
-      const data = await uploadFiles(filesList);
-      const savedCount = data.saved?.length ?? 0;
-      const skippedCount = data.skipped?.length ?? 0;
-
-      uploadHint.textContent = `Uploaded ${savedCount} file(s). Next question will use them. ${
-        skippedCount ? `(Skipped ${skippedCount} unsupported file(s).)` : ""
-      }`;
-    } catch (e) {
-      uploadHint.textContent = e?.message ? `Upload error: ${e.message}` : "Upload error.";
-    } finally {
-      uploadBtn.disabled = false;
-      fileInput.value = "";
-    }
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    if (e.dataTransfer?.files?.length) handleFiles(e.dataTransfer.files);
   });
 }
 
 function wireAskButton() {
   $("askBtn").addEventListener("click", askQuestion);
   $("question").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      askQuestion();
-    }
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) askQuestion();
   });
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function setStatus(el, message, type) {
+  if (type === "loading") {
+    el.innerHTML = `<span class="spinner"></span> Working…`;
+  } else {
+    el.textContent = message;
+    el.style.color = type === "error"
+      ? "var(--danger)"
+      : "var(--text-muted)";
+  }
+}
+
+function setUploadStatus(el, message, type) {
+  el.textContent = message;
+  el.className = type; // "success" | "error" | ""
 }
 
 wireUpload();
 wireAskButton();
-
