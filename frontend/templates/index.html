@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RAG Chatbot</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
+          sans-serif;
+        margin: 24px;
+        max-width: 900px;
+      }
+      textarea {
+        width: 100%;
+        min-height: 110px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+      }
+      button {
+        padding: 10px 14px;
+        cursor: pointer;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .card {
+        border: 1px solid #e5e5e5;
+        border-radius: 12px;
+        padding: 16px;
+        margin-top: 16px;
+      }
+      pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #fafafa;
+        border: 1px solid #eee;
+        border-radius: 10px;
+        padding: 12px;
+        min-height: 80px;
+      }
+      .muted {
+        color: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>RAG Chatbot</h1>
+    <p class="muted">Ask questions over the documents indexed by the RAG pipeline.</p>
+
+    <div class="card">
+      <h2>Upload Files</h2>
+      <p class="muted">
+        Upload documents to index them for question answering.
+      </p>
+      <div class="row">
+        <button id="uploadBtn" type="button">Upload Files</button>
+        <input
+          id="fileInput"
+          type="file"
+          multiple
+          style="display: none"
+        />
+        <span id="uploadHint" class="muted"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Ask a Question</h2>
+      <textarea
+        id="question"
+        placeholder="Type your question here..."
+      ></textarea>
+      <div class="row" style="margin-top: 12px">
+        <button id="askBtn" type="button">Ask</button>
+        <span id="status" class="muted"></span>
+      </div>
+      <h3 style="margin-top: 18px">Answer</h3>
+      <pre id="answer"></pre>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
+
