@@ -54,8 +54,8 @@ async def lifespan(app: FastAPI):
 
 # Create the FastAPI app with lifespan handlers.
 app = FastAPI(
-    title="Locaria's Intelligence Layer",
-    description="Query your documents using retrieval-augmented generation. Powered by LangChain and Google Vertex AI.",
+    title="RAG Chatbot",
+    description="LLM-powered chat application with retrieval over custom documents for grounded, context-aware responses.",
     lifespan=lifespan,
 )
 
