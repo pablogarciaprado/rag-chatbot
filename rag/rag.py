@@ -106,15 +106,17 @@ def _build_vectorstore(chunks: List[Any]) -> Any:
     )
 
 class RagWrapper:
-    """Thin wrapper so callers can do `invoke(question: str) -> str`."""
+    """Thin wrapper so callers can do `invoke(messages) -> str`."""
 
     def __init__(self, agent_: Any):
         self._agent = agent_
 
-    def invoke(self, question: str) -> str:
-        payload: Dict[str, Any] = {
-            "messages": [{"role": "user", "content": question}],
-        }
+    def invoke(self, messages: List[Dict[str, str]]) -> str:
+        """
+        Accept the full conversation as a list of ``{"role": ..., "content": ...}``
+        dicts and return the assistant's reply as a plain string.
+        """
+        payload: Dict[str, Any] = {"messages": messages}
         state = self._agent.invoke(payload)
 
         # LangChain agents usually return a state dict with `messages`.
@@ -132,7 +134,7 @@ def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None):
     """
     Build the agent-based RAG app (matches notebook's create_agent + dynamic_prompt).
 
-    Returns an object with `.invoke(question: str) -> str`.
+    Returns an object with `.invoke(messages: list[dict]) -> str`.
     """
     from langchain.agents import create_agent
 

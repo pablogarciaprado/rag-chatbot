@@ -150,7 +150,12 @@ def query(request: QueryRequest) -> QueryResponse:
     try:
         llm_provider = GeminiFlashLiteProvider() # this could be changed depending on the provider to use
         chain = get_chain(llm_provider)
-        answer = chain.invoke(question)
+
+        # Build the full messages list: prior turns + the current question.
+        messages = [{"role": m.role, "content": m.content} for m in request.history]
+        messages.append({"role": "user", "content": question})
+
+        answer = chain.invoke(messages)
         return QueryResponse(answer=answer)
     except RuntimeError as e:
         # Surface "no docs uploaded" type issues as a client error.

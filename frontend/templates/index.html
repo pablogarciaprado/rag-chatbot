@@ -70,9 +70,7 @@
         margin-bottom: 16px;
       }
 
-      .header-badge svg {
-        flex-shrink: 0;
-      }
+      .header-badge svg { flex-shrink: 0; }
 
       h1 {
         font-size: 32px;
@@ -189,54 +187,6 @@
       #uploadStatus.success { color: var(--success); }
       #uploadStatus.error   { color: var(--danger); }
 
-      /* ── Question & Answer ── */
-      .textarea-wrapper {
-        position: relative;
-      }
-
-      textarea {
-        width: 100%;
-        min-height: 100px;
-        font-family: var(--font);
-        font-size: 14px;
-        line-height: 1.6;
-        color: var(--text);
-        background: #fafafc;
-        border: 1.5px solid var(--border);
-        border-radius: 10px;
-        padding: 14px 16px;
-        resize: vertical;
-        outline: none;
-        transition: border-color .15s;
-      }
-
-      textarea:focus {
-        border-color: var(--accent);
-        background: #fff;
-      }
-
-      textarea::placeholder { color: var(--text-muted); }
-
-      .textarea-hint {
-        position: absolute;
-        bottom: 12px;
-        right: 14px;
-        font-size: 11.5px;
-        color: var(--text-muted);
-        pointer-events: none;
-        opacity: 0;
-        transition: opacity .15s;
-      }
-
-      textarea:focus ~ .textarea-hint { opacity: 1; }
-
-      .actions {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        margin-top: 12px;
-      }
-
       /* ── Button ── */
       .btn {
         display: inline-flex;
@@ -251,6 +201,7 @@
         cursor: pointer;
         transition: background .15s, opacity .15s, transform .1s;
         line-height: 1;
+        white-space: nowrap;
       }
 
       .btn:active { transform: scale(.98); }
@@ -267,12 +218,22 @@
         cursor: not-allowed;
       }
 
-      #statusText {
-        font-size: 13px;
+      .btn-ghost {
+        background: transparent;
         color: var(--text-muted);
-        display: flex;
-        align-items: center;
-        gap: 6px;
+        padding: 7px 12px;
+        font-size: 13px;
+      }
+
+      .btn-ghost:hover:not(:disabled) {
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      .btn-icon {
+        padding: 10px;
+        border-radius: 10px;
+        flex-shrink: 0;
       }
 
       /* ── Spinner ── */
@@ -288,40 +249,150 @@
         flex-shrink: 0;
       }
 
-      /* ── Answer block ── */
-      .answer-label {
-        font-size: 12.5px;
-        font-weight: 600;
-        letter-spacing: .04em;
-        text-transform: uppercase;
-        color: var(--text-muted);
-        margin-top: 24px;
-        margin-bottom: 10px;
-      }
-
-      .answer-box {
-        background: #fafafc;
+      /* ── Chat window ── */
+      .chat-window {
+        height: 420px;
+        overflow-y: auto;
+        padding: 4px 2px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        scroll-behavior: smooth;
         border: 1px solid var(--border);
         border-radius: 10px;
+        background: #fafafc;
         padding: 16px;
-        min-height: 80px;
+      }
+
+      .chat-empty {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-muted);
+        font-size: 13.5px;
+        font-style: italic;
+        text-align: center;
+        padding: 20px;
+      }
+
+      /* ── Message bubbles ── */
+      .msg {
+        display: flex;
+        flex-direction: column;
+        max-width: 82%;
+        gap: 4px;
+      }
+
+      .msg.user {
+        align-self: flex-end;
+        align-items: flex-end;
+      }
+
+      .msg.assistant {
+        align-self: flex-start;
+        align-items: flex-start;
+      }
+
+      .msg-label {
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: .05em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        padding: 0 4px;
+      }
+
+      .msg-bubble {
+        padding: 10px 14px;
         font-size: 14px;
-        line-height: 1.7;
-        color: var(--text);
+        line-height: 1.65;
         white-space: pre-wrap;
         word-break: break-word;
       }
 
-      .answer-box.empty {
-        color: var(--text-muted);
-        font-style: italic;
+      .msg.user .msg-bubble {
+        background: var(--accent);
+        color: #fff;
+        border-radius: 14px 14px 4px 14px;
       }
 
-      /* ── Divider ── */
-      .divider {
-        height: 1px;
-        background: var(--border);
-        margin: 20px 0;
+      .msg.assistant .msg-bubble {
+        background: var(--surface);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 14px 14px 14px 4px;
+      }
+
+      .msg.assistant .msg-bubble.thinking {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--text-muted);
+        font-style: italic;
+        font-size: 13px;
+      }
+
+      /* ── Chat input area ── */
+      .chat-input-area {
+        margin-top: 14px;
+        border-top: 1px solid var(--border);
+        padding-top: 14px;
+      }
+
+      .chat-input-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 10px;
+      }
+
+      .chat-textarea {
+        flex: 1;
+        min-height: 44px;
+        max-height: 140px;
+        font-family: var(--font);
+        font-size: 14px;
+        line-height: 1.55;
+        color: var(--text);
+        background: #fafafc;
+        border: 1.5px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 14px;
+        resize: none;
+        outline: none;
+        overflow-y: auto;
+        transition: border-color .15s;
+      }
+
+      .chat-textarea:focus {
+        border-color: var(--accent);
+        background: #fff;
+      }
+
+      .chat-textarea::placeholder { color: var(--text-muted); }
+
+      .chat-input-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 8px;
+        min-height: 18px;
+      }
+
+      #statusText {
+        font-size: 12.5px;
+        color: var(--text-muted);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      /* ── Card header row (title + action button) ── */
+      .card-header-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 4px;
       }
 
       /* ── Footer ── */
@@ -377,37 +448,47 @@
         <div id="uploadStatus"></div>
       </div>
 
-      <!-- Ask card -->
+      <!-- Chat card -->
       <div class="card">
-        <div class="card-title">
-          <span class="card-title-icon">
-            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-            </svg>
-          </span>
-          Ask a Question
+        <div class="card-header-row">
+          <div class="card-title">
+            <span class="card-title-icon">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+            </span>
+            Conversation
+          </div>
+          <button id="clearBtn" class="btn btn-ghost" type="button">New chat</button>
         </div>
-        <p class="card-description">Ask anything about your uploaded documents.</p>
+        <p class="card-description">Ask questions about your uploaded documents. The assistant remembers the full conversation.</p>
 
-        <div class="textarea-wrapper">
-          <textarea id="question" placeholder="Type your question here…" autocomplete="off" spellcheck="true"></textarea>
-          <span class="textarea-hint">⌘ Enter to send</span>
-        </div>
-
-        <div class="actions">
-          <button id="askBtn" class="btn btn-primary" type="button">
-            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
-              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-            </svg>
-            Ask
-          </button>
-          <span id="statusText"></span>
+        <!-- Message history -->
+        <div id="chatWindow" class="chat-window">
+          <div class="chat-empty" id="chatEmpty">No messages yet — start the conversation below.</div>
         </div>
 
-        <div class="divider"></div>
-
-        <div class="answer-label">Answer</div>
-        <div id="answer" class="answer-box empty">Your answer will appear here.</div>
+        <!-- Input area -->
+        <div class="chat-input-area">
+          <div class="chat-input-row">
+            <textarea
+              id="question"
+              class="chat-textarea"
+              placeholder="Type your message… (Enter to send, Shift+Enter for new line)"
+              autocomplete="off"
+              spellcheck="true"
+              rows="1"
+            ></textarea>
+            <button id="askBtn" class="btn btn-primary btn-icon" type="button" title="Send">
+              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
+            </button>
+          </div>
+          <div class="chat-input-meta">
+            <span id="statusText"></span>
+          </div>
+        </div>
       </div>
 
       <footer class="footer">Built by Pablo with love</footer>
