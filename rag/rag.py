@@ -111,7 +111,7 @@ class RagWrapper:
     def __init__(self, agent_: Any):
         self._agent = agent_
 
-    def invoke(self, messages: List[Dict[str, str]]) -> str:
+    def get_response(self, messages: List[Dict[str, str]]) -> str:
         """
         Accept the full conversation as a list of ``{"role": ..., "content": ...}``
         dicts and return the assistant's reply as a plain string.
@@ -158,7 +158,7 @@ def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None):
 
     # Build the vector store.
     ## We are using an in-memory vector store to store the chunks,
-    ## this is not scalable for large datasets, but it is convenient for the demo.
+    ## this is not scalable for large datasets, but it is convenient for a simple application.
     vectorstore = _build_vectorstore(chunks)
 
     # Build the LLM.

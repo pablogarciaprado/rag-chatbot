@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 class Message(BaseModel):
     """A single turn in the conversation history."""
-    role: str     # "user" or "assistant"
+    role: str # "user" or "assistant"
     content: str
 
 

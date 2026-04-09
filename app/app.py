@@ -155,7 +155,7 @@ def query(request: QueryRequest) -> QueryResponse:
         messages = [{"role": m.role, "content": m.content} for m in request.history]
         messages.append({"role": "user", "content": question})
 
-        answer = chain.invoke(messages)
+        answer = chain.get_response(messages)
         return QueryResponse(answer=answer)
     except RuntimeError as e:
         # Surface "no docs uploaded" type issues as a client error.

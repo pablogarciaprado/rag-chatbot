@@ -127,8 +127,8 @@ async function sendMessage() {
     appendMessage("assistant", answer);
 
     // Commit both turns to history after a successful round-trip.
-    conversationHistory.push({ role: "user",      content: question });
-    conversationHistory.push({ role: "assistant", content: answer  });
+    conversationHistory.push({ role: "user", content: question });
+    conversationHistory.push({ role: "assistant", content: answer });
 
   } catch {
     removeThinkingBubble();
