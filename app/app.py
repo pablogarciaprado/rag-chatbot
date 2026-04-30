@@ -14,10 +14,12 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from rag.rag import get_chain, reset_chain
+from rag.rag import get_chain, reset_chain, SUPPORTED_EXTENSIONS
 from src.llm.gemini import GeminiFlashLiteProvider
 
 from app.schemas import QueryRequest, QueryResponse
+
+ENABLE_PRINT_DEBUG = False
 
 # Compute repo root from this file location (`.../app/app.py` -> repo root).
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -83,7 +85,7 @@ def health():
 @app.post("/upload")
 def upload_files(files: List[UploadFile] = File(...)):
     """Upload multiple documents for indexing (supported: docx/pdf/txt/md)."""
-    supported = {".docx", ".pdf", ".txt", ".md"}
+    supported = SUPPORTED_EXTENSIONS
     uploaded_dir = _uploaded_dir()
     uploaded_dir.mkdir(parents=True, exist_ok=True)
 
@@ -149,8 +151,15 @@ def query(request: QueryRequest) -> QueryResponse:
 
     try:
         llm_provider = GeminiFlashLiteProvider() # this could be changed depending on the provider to use
-        chain = get_chain(llm_provider)
-        answer = chain.invoke(question)
+        chain = get_chain(llm_provider, debug=ENABLE_PRINT_DEBUG)
+
+        # Build the full messages list: prior turns + the current question.
+        messages = [{"role": m.role, "content": m.content} for m in request.history]
+        messages.append({"role": "user", "content": question})
+        if ENABLE_PRINT_DEBUG:
+            print("[DEBUG]: messages", messages)
+
+        answer = chain.get_response(messages)
         return QueryResponse(answer=answer)
     except RuntimeError as e:
         # Surface "no docs uploaded" type issues as a client error.

@@ -12,6 +12,7 @@ Implements:
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
@@ -32,15 +33,43 @@ UPLOADED_DIR = os.getenv(
     str(_REPO_ROOT / "context_files"),
 )
 
-SUPPORTED_EXTENSIONS = {".docx", ".pdf", ".txt", ".md"}
+SUPPORTED_EXTENSIONS = {".docx", ".pdf", ".txt", ".md", ".pptx"}
+
+
+def _ensure_nltk_resource_from_error(error: LookupError) -> bool:
+    """
+    Attempt to download a missing NLTK (Natural Language Toolkit) resource inferred from a LookupError.
+
+    Returns True if a download was attempted successfully.
+    """
+    try:
+        import nltk
+    except Exception:
+        return False
+
+    match = re.search(r"Attempted to load '([^']+)'", str(error))
+    if not match:
+        return False
+
+    attempted_path = match.group(1).strip("/")
+    resource_name = attempted_path.split("/")[-1] if attempted_path else ""
+    if not resource_name:
+        return False
+
+    try:
+        nltk.download(resource_name, quiet=True)
+        return True
+    except Exception:
+        return False
 
 
 def _load_documents() -> List[Any]:
     """Load all supported files under UPLOADED_DIR."""
     from langchain_community.document_loaders import (
-        Docx2txtLoader,
-        PyPDFLoader,
-        TextLoader,
+        Docx2txtLoader, # For .docx files
+        PyPDFLoader, # For .pdf files
+        TextLoader, # For .txt and .md files
+        UnstructuredPowerPointLoader, # For .pptx files
     )
 
     base_dir = Path(UPLOADED_DIR)
@@ -62,6 +91,16 @@ def _load_documents() -> List[Any]:
         elif suffix == ".pdf":
             loader = PyPDFLoader(str(path))
             documents.extend(loader.load())
+        elif suffix == ".pptx":
+            loader = UnstructuredPowerPointLoader(str(path))
+            try:
+                documents.extend(loader.load())
+            except LookupError as e:
+                # Unstructured's PPTX processing can require NLTK tagger data.
+                if _ensure_nltk_resource_from_error(e):
+                    documents.extend(loader.load())
+                else:
+                    raise
         else:
             # Treat .txt and .md as plain text.
             loader = TextLoader(str(path))
@@ -106,15 +145,17 @@ def _build_vectorstore(chunks: List[Any]) -> Any:
     )
 
 class RagWrapper:
-    """Thin wrapper so callers can do `invoke(question: str) -> str`."""
+    """Thin wrapper so callers can do `invoke(messages) -> str`."""
 
     def __init__(self, agent_: Any):
         self._agent = agent_
 
-    def invoke(self, question: str) -> str:
-        payload: Dict[str, Any] = {
-            "messages": [{"role": "user", "content": question}],
-        }
+    def get_response(self, messages: List[Dict[str, str]]) -> str:
+        """
+        Accept the full conversation as a list of ``{"role": ..., "content": ...}``
+        dicts and return the assistant's reply as a plain string.
+        """
+        payload: Dict[str, Any] = {"messages": messages}
         state = self._agent.invoke(payload)
 
         # LangChain agents usually return a state dict with `messages`.
@@ -128,11 +169,11 @@ class RagWrapper:
         return str(state)
 
 
-def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None):
+def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool = False):
     """
     Build the agent-based RAG app (matches notebook's create_agent + dynamic_prompt).
 
-    Returns an object with `.invoke(question: str) -> str`.
+    Returns an object with `.invoke(messages: list[dict]) -> str`.
     """
     from langchain.agents import create_agent
 
@@ -154,9 +195,13 @@ def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None):
     # Split documents into overlapping chunks.
     chunks = _split_documents(documents)
 
+    if debug:
+        print("[DEBUG]: chunks", len(chunks))
+        print("[DEBUG]: chunks", chunks)
+
     # Build the vector store.
     ## We are using an in-memory vector store to store the chunks,
-    ## this is not scalable for large datasets, but it is convenient for the demo.
+    ## this is not scalable for large datasets, but it is convenient for a simple application.
     vectorstore = _build_vectorstore(chunks)
 
     # Build the LLM.
@@ -177,10 +222,10 @@ def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None):
 _CHAIN: Optional[Any] = None
 
 
-def get_chain(llm_provider: Optional[BaseLLMProvider] = None):
+def get_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool = False):
     global _CHAIN
     if _CHAIN is None:
-        _CHAIN = build_rag_chain(llm_provider)
+        _CHAIN = build_rag_chain(llm_provider, debug)
     return _CHAIN
 
 def reset_chain() -> None:

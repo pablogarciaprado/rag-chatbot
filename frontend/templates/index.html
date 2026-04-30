@@ -7,331 +7,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-    <style>
-      *, *::before, *::after {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-      }
-
-      :root {
-        --bg: #f5f5f7;
-        --surface: #ffffff;
-        --border: #e4e4e9;
-        --text: #111118;
-        --text-muted: #7b7b93;
-        --accent: #5b5bd6;
-        --accent-hover: #4848c2;
-        --accent-dim: #ededfc;
-        --danger: #e5484d;
-        --success: #30a46c;
-        --radius: 14px;
-        --shadow: 0 1px 4px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.04);
-        --font: "Inter", system-ui, -apple-system, sans-serif;
-      }
-
-      html { -webkit-font-smoothing: antialiased; }
-
-      body {
-        font-family: var(--font);
-        font-size: 15px;
-        background: var(--bg);
-        color: var(--text);
-        min-height: 100vh;
-        padding: 48px 20px 80px;
-      }
-
-      .container {
-        max-width: 700px;
-        margin: 0 auto;
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-      }
-
-      /* ── Header ── */
-      .header {
-        text-align: center;
-        padding: 8px 0 24px;
-      }
-
-      .header-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        background: var(--accent-dim);
-        color: var(--accent);
-        font-size: 12px;
-        font-weight: 600;
-        letter-spacing: .04em;
-        text-transform: uppercase;
-        padding: 4px 12px;
-        border-radius: 100px;
-        margin-bottom: 16px;
-      }
-
-      .header-badge svg {
-        flex-shrink: 0;
-      }
-
-      h1 {
-        font-size: 32px;
-        font-weight: 600;
-        letter-spacing: -.02em;
-        color: var(--text);
-        line-height: 1.2;
-      }
-
-      .header-description {
-        margin-top: 10px;
-        color: var(--text-muted);
-        font-size: 15px;
-        line-height: 1.6;
-        max-width: 480px;
-        margin-inline: auto;
-      }
-
-      /* ── Card ── */
-      .card {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: 24px;
-        box-shadow: var(--shadow);
-      }
-
-      .card-title {
-        font-size: 14px;
-        font-weight: 600;
-        letter-spacing: .01em;
-        color: var(--text);
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 4px;
-      }
-
-      .card-title-icon {
-        width: 28px;
-        height: 28px;
-        border-radius: 8px;
-        background: var(--accent-dim);
-        color: var(--accent);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-      }
-
-      .card-description {
-        font-size: 13px;
-        color: var(--text-muted);
-        margin-bottom: 18px;
-        line-height: 1.5;
-      }
-
-      /* ── Upload area ── */
-      .upload-zone {
-        display: block;
-        border: 1.5px dashed var(--border);
-        border-radius: 10px;
-        padding: 28px 20px;
-        text-align: center;
-        cursor: pointer;
-        transition: border-color .15s, background .15s;
-        background: #fafafc;
-      }
-
-      .upload-zone:hover {
-        border-color: var(--accent);
-        background: var(--accent-dim);
-      }
-
-      .upload-zone.dragging {
-        border-color: var(--accent);
-        background: var(--accent-dim);
-      }
-
-      .upload-zone-icon {
-        width: 40px;
-        height: 40px;
-        background: var(--accent-dim);
-        border-radius: 10px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin: 0 auto 12px;
-        color: var(--accent);
-      }
-
-      .upload-zone-label {
-        font-size: 14px;
-        font-weight: 500;
-        color: var(--text);
-      }
-
-      .upload-zone-hint {
-        font-size: 12.5px;
-        color: var(--text-muted);
-        margin-top: 4px;
-      }
-
-      #uploadStatus {
-        margin-top: 12px;
-        font-size: 13px;
-        min-height: 20px;
-        color: var(--text-muted);
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-
-      #uploadStatus.success { color: var(--success); }
-      #uploadStatus.error   { color: var(--danger); }
-
-      /* ── Question & Answer ── */
-      .textarea-wrapper {
-        position: relative;
-      }
-
-      textarea {
-        width: 100%;
-        min-height: 100px;
-        font-family: var(--font);
-        font-size: 14px;
-        line-height: 1.6;
-        color: var(--text);
-        background: #fafafc;
-        border: 1.5px solid var(--border);
-        border-radius: 10px;
-        padding: 14px 16px;
-        resize: vertical;
-        outline: none;
-        transition: border-color .15s;
-      }
-
-      textarea:focus {
-        border-color: var(--accent);
-        background: #fff;
-      }
-
-      textarea::placeholder { color: var(--text-muted); }
-
-      .textarea-hint {
-        position: absolute;
-        bottom: 12px;
-        right: 14px;
-        font-size: 11.5px;
-        color: var(--text-muted);
-        pointer-events: none;
-        opacity: 0;
-        transition: opacity .15s;
-      }
-
-      textarea:focus ~ .textarea-hint { opacity: 1; }
-
-      .actions {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        margin-top: 12px;
-      }
-
-      /* ── Button ── */
-      .btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 7px;
-        font-family: var(--font);
-        font-size: 14px;
-        font-weight: 500;
-        padding: 9px 18px;
-        border-radius: 9px;
-        border: none;
-        cursor: pointer;
-        transition: background .15s, opacity .15s, transform .1s;
-        line-height: 1;
-      }
-
-      .btn:active { transform: scale(.98); }
-
-      .btn-primary {
-        background: var(--accent);
-        color: #fff;
-      }
-
-      .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
-
-      .btn-primary:disabled {
-        opacity: .5;
-        cursor: not-allowed;
-      }
-
-      #statusText {
-        font-size: 13px;
-        color: var(--text-muted);
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-
-      /* ── Spinner ── */
-      @keyframes spin { to { transform: rotate(360deg); } }
-
-      .spinner {
-        width: 14px;
-        height: 14px;
-        border: 2px solid var(--border);
-        border-top-color: var(--accent);
-        border-radius: 50%;
-        animation: spin .7s linear infinite;
-        flex-shrink: 0;
-      }
-
-      /* ── Answer block ── */
-      .answer-label {
-        font-size: 12.5px;
-        font-weight: 600;
-        letter-spacing: .04em;
-        text-transform: uppercase;
-        color: var(--text-muted);
-        margin-top: 24px;
-        margin-bottom: 10px;
-      }
-
-      .answer-box {
-        background: #fafafc;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 16px;
-        min-height: 80px;
-        font-size: 14px;
-        line-height: 1.7;
-        color: var(--text);
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-
-      .answer-box.empty {
-        color: var(--text-muted);
-        font-style: italic;
-      }
-
-      /* ── Divider ── */
-      .divider {
-        height: 1px;
-        background: var(--border);
-        margin: 20px 0;
-      }
-
-      /* ── Footer ── */
-      .footer {
-        text-align: center;
-        font-size: 12.5px;
-        color: var(--text-muted);
-        margin-top: 8px;
-      }
-    </style>
+    <link rel="stylesheet" href="/static/css/index.css" />
+    <link rel="icon" href="/static/favicon.ico" sizes="any" />
   </head>
   <body>
     <div class="container">
@@ -377,37 +54,47 @@
         <div id="uploadStatus"></div>
       </div>
 
-      <!-- Ask card -->
+      <!-- Chat card -->
       <div class="card">
-        <div class="card-title">
-          <span class="card-title-icon">
-            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-            </svg>
-          </span>
-          Ask a Question
+        <div class="card-header-row">
+          <div class="card-title">
+            <span class="card-title-icon">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+            </span>
+            Conversation
+          </div>
+          <button id="clearBtn" class="btn btn-ghost" type="button">New chat</button>
         </div>
-        <p class="card-description">Ask anything about your uploaded documents.</p>
+        <p class="card-description">Ask questions about your uploaded documents. The assistant remembers the full conversation.</p>
 
-        <div class="textarea-wrapper">
-          <textarea id="question" placeholder="Type your question here…" autocomplete="off" spellcheck="true"></textarea>
-          <span class="textarea-hint">⌘ Enter to send</span>
-        </div>
-
-        <div class="actions">
-          <button id="askBtn" class="btn btn-primary" type="button">
-            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
-              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-            </svg>
-            Ask
-          </button>
-          <span id="statusText"></span>
+        <!-- Message history -->
+        <div id="chatWindow" class="chat-window">
+          <div class="chat-empty" id="chatEmpty">No messages yet — start the conversation below.</div>
         </div>
 
-        <div class="divider"></div>
-
-        <div class="answer-label">Answer</div>
-        <div id="answer" class="answer-box empty">Your answer will appear here.</div>
+        <!-- Input area -->
+        <div class="chat-input-area">
+          <div class="chat-input-row">
+            <textarea
+              id="question"
+              class="chat-textarea"
+              placeholder="Type your message… (Enter to send, Shift+Enter for new line)"
+              autocomplete="off"
+              spellcheck="true"
+              rows="1"
+            ></textarea>
+            <button id="askBtn" class="btn btn-primary btn-icon" type="button" title="Send">
+              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
+            </button>
+          </div>
+          <div class="chat-input-meta">
+            <span id="statusText"></span>
+          </div>
+        </div>
       </div>
 
       <footer class="footer">Built by Pablo with love</footer>
