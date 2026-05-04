@@ -14,8 +14,9 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from dotenv import load_dotenv
+from langchain_core.vectorstores import InMemoryVectorStore
 
 # Repo-level absolute imports.
 from src.llm.base import BaseLLMProvider
@@ -135,26 +136,73 @@ def _build_embeddings() -> Any:
     )
 
 def _build_vectorstore(chunks: List[Any]) -> Any:
-    from langchain_core.vectorstores import InMemoryVectorStore
+    """
+    Build the vector store from the chunks.
 
-    chunk_texts = [doc.page_content for doc in chunks]
+    We are using an in-memory vector for simplicity, 
+    but this is not scalable for large datasets,
+    and it is not recommended for production use.
+    
+    Args:
+        chunks: List[Any] - The chunks to build the vector store from.
+
+    Returns:
+        InMemoryVectorStore - The vector store.
+    """
     embeddings = _build_embeddings()
-    return InMemoryVectorStore.from_texts(
-        chunk_texts,
+    return InMemoryVectorStore.from_documents(
+        chunks,
         embedding=embeddings,
     )
 
+def _retrieve_sources(messages: List[Dict[str, str]], vectorstore: InMemoryVectorStore) -> List[Dict[str, Any]]:
+    """Run a similarity search on the last user message and return deduplicated source metadata."""
+
+    last_user = next(
+        (m for m in reversed(messages) if m.get("role") == "user"), None
+    )
+    if not last_user or not vectorstore:
+        return []
+
+    try:
+        retrieved = vectorstore.similarity_search(last_user["content"], k=4)
+    except Exception:
+        return []
+
+    seen: set = set()
+    sources: List[Dict[str, Any]] = []
+    for doc in retrieved:
+        meta = doc.metadata or {}
+        source_path = meta.get("source", "")
+        raw_page = meta.get("page")
+        # PyPDFLoader uses 0-based page numbers; display as 1-based.
+        page = (raw_page + 1) if isinstance(raw_page, int) else None
+        key = (source_path, page)
+        if key not in seen:
+            seen.add(key)
+            sources.append({
+                "file": Path(source_path).name if source_path else "Unknown",
+                "path": source_path,
+                "page": page,
+            })
+
+    return sources
+
 class RagWrapper:
-    """Thin wrapper so callers can do `invoke(messages) -> str`."""
+    """Thin wrapper so callers can do `get_response(messages) -> (answer, sources)`."""
 
-    def __init__(self, agent_: Any):
+    def __init__(self, agent_: Any, vectorstore_: Any):
         self._agent = agent_
+        self._vectorstore = vectorstore_
 
-    def get_response(self, messages: List[Dict[str, str]]) -> str:
+    def get_response(self, messages: List[Dict[str, str]]) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Accept the full conversation as a list of ``{"role": ..., "content": ...}``
-        dicts and return the assistant's reply as a plain string.
+        dicts and return ``(answer, sources)`` where *sources* is a deduplicated
+        list of ``{"file", "path", "page"}`` dicts derived from the retrieved chunks.
         """
+        sources = _retrieve_sources(messages, self._vectorstore)
+
         payload: Dict[str, Any] = {"messages": messages}
         state = self._agent.invoke(payload)
 
@@ -163,10 +211,9 @@ class RagWrapper:
             last = state["messages"][-1]
             content = getattr(last, "content", None)
             if content:
-                return content
+                return content, sources
 
-        # Fallback: best-effort string conversion
-        return str(state)
+        return str(state), sources
 
 
 def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool = False):
@@ -215,7 +262,7 @@ def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool 
     agent = create_agent(model=llm, tools=[], middleware=[middleware])
 
     # Return the RAG wrapper.
-    return RagWrapper(agent)
+    return RagWrapper(agent, vectorstore)
 
 
 # Lazy singleton (build on first request)

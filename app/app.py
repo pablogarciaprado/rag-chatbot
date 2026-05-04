@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from rag.rag import get_chain, reset_chain, SUPPORTED_EXTENSIONS
 from src.llm.gemini import GeminiFlashLiteProvider
 
-from app.schemas import QueryRequest, QueryResponse
+from app.schemas import QueryRequest, QueryResponse, Source
 
 ENABLE_PRINT_DEBUG = False
 
@@ -144,7 +144,15 @@ def upload_files(files: List[UploadFile] = File(...)):
 ## response_model tells FastAPI what Pydantic model the response should conform to.
 @app.post("/query", response_model=QueryResponse)
 def query(request: QueryRequest) -> QueryResponse:
-    """Ask a question; returns an answer based on the indexed documents."""
+    """
+    Ask a question; returns an answer based on the indexed documents.
+
+    Args:
+        request: QueryRequest - The request containing the question and history.
+
+    Returns:
+        QueryResponse - The response containing the answer and sources.
+    """
     question = request.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question cannot be empty")
@@ -159,8 +167,9 @@ def query(request: QueryRequest) -> QueryResponse:
         if ENABLE_PRINT_DEBUG:
             print("[DEBUG]: messages", messages)
 
-        answer = chain.get_response(messages)
-        return QueryResponse(answer=answer)
+        answer, raw_sources = chain.get_response(messages)
+        sources = [Source(**s) for s in raw_sources]
+        return QueryResponse(answer=answer, sources=sources)
     except RuntimeError as e:
         # Surface "no docs uploaded" type issues as a client error.
         raise HTTPException(status_code=400, detail=str(e))

@@ -2,7 +2,7 @@
 Pydantic models for the API
 """
 
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -26,8 +26,16 @@ class QueryRequest(BaseModel):
     history: List[Message] = []
 
 
+class Source(BaseModel):
+    """A single document chunk that was retrieved to answer the question."""
+    file: str
+    path: str
+    page: Optional[int] = None
+
+
 class QueryResponse(BaseModel):
     """
     Response model for the query endpoint
     """
     answer: str
+    sources: List[Source] = []

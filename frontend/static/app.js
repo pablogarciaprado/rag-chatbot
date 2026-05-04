@@ -7,7 +7,7 @@ let isThinking = false;
 
 // ── Chat rendering ────────────────────────────────────────────────────────────
 
-function appendMessage(role, content) {
+function appendMessage(role, content, sources = []) {
   const chatWindow = $("chatWindow");
 
   // Remove empty-state placeholder on first real message.
@@ -23,7 +23,55 @@ function appendMessage(role, content) {
 
   const bubble = document.createElement("div");
   bubble.className = "msg-bubble";
-  bubble.textContent = content;
+
+  // If the message is from the assistant, add the citation sources to the bubble.
+  if (role === "assistant") {
+    const text = document.createElement("div");
+    text.className = "msg-bubble-text";
+    text.textContent = content;
+    bubble.appendChild(text);
+
+    // If there are sources, add the citation sources to the bubble.
+    if (sources && sources.length > 0) {
+      const footer = document.createElement("div");
+      footer.className = "msg-sources";
+
+      const footerLabel = document.createElement("span");
+      footerLabel.className = "msg-sources-label";
+      footerLabel.textContent = "Sources";
+      footer.appendChild(footerLabel);
+
+      sources.forEach((src) => {
+        const pill = document.createElement("span");
+        pill.className = "msg-source-pill";
+        pill.title = src.path || src.file || "";
+
+        const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        icon.setAttribute("width", "10");
+        icon.setAttribute("height", "10");
+        icon.setAttribute("viewBox", "0 0 24 24");
+        icon.setAttribute("fill", "none");
+        icon.setAttribute("stroke", "currentColor");
+        icon.setAttribute("stroke-width", "2");
+        icon.setAttribute("stroke-linecap", "round");
+        icon.setAttribute("stroke-linejoin", "round");
+        icon.innerHTML = `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>`;
+        pill.appendChild(icon);
+
+        const pillText = document.createElement("span");
+        let label = src.file || src.path || "Unknown";
+        if (src.page != null) label += ` · p. ${src.page}`;
+        pillText.textContent = label;
+        pill.appendChild(pillText);
+
+        footer.appendChild(pill);
+      });
+
+      bubble.appendChild(footer);
+    }
+  } else {
+    bubble.textContent = content;
+  }
 
   msg.appendChild(label);
   msg.appendChild(bubble);
@@ -123,8 +171,10 @@ async function sendMessage() {
 
     const data = await res.json();
     const answer = data.answer ?? "";
+    const sources = data.sources ?? [];
 
-    appendMessage("assistant", answer);
+    // Append the assistant's message (and its citation sources) to the chat window.
+    appendMessage("assistant", answer, sources);
 
     // Commit both turns to history after a successful round-trip.
     conversationHistory.push({ role: "user", content: question });
