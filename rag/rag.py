@@ -234,8 +234,7 @@ def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool 
     chunks = _split_documents(documents)
 
     if debug:
-        print("[DEBUG]: chunks", len(chunks))
-        print("[DEBUG]: chunks", chunks)
+        print("[DEBUG][rag.py]: chunks", len(chunks))
 
     # Build the vector store.
     ## We are using an in-memory vector store to store the chunks,

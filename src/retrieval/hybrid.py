@@ -11,10 +11,33 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, List, Literal, Optional
 
 from langchain_core.documents import Document
 from langchain_core.vectorstores import InMemoryVectorStore
+
+
+def _debug_enabled() -> bool:
+    return os.getenv("ENABLE_PRINT_DEBUG", "False").lower() == "true"
+
+
+def _debug_print(*parts: object) -> None:
+    if _debug_enabled():
+        print("[DEBUG][retrieval]", *parts)
+
+
+def _doc_label(doc: Document, *, max_chars: int = 80) -> str:
+    """Compact label for logs: filename, page, and a short text preview."""
+    meta = doc.metadata or {}
+    source = meta.get("source", "")
+    name = Path(source).name if source else "?"
+    raw_page = meta.get("page")
+    page = f":p{(raw_page + 1)}" if isinstance(raw_page, int) else ""
+    preview = doc.page_content.replace("\n", " ").strip()[:max_chars]
+    if len(doc.page_content) > max_chars:
+        preview += "…"
+    return f"{name}{page} «{preview}»"
 
 RetrievalMode = Literal["semantic", "lexical", "hybrid"]
 
@@ -52,6 +75,7 @@ def _parse_retrieval_mode() -> RetrievalMode:
     # .env files often carry trailing comments; strip them so "hybrid # default" works.
     raw = raw.split("#", 1)[0].strip()
     if raw not in VALID_MODES:
+        _debug_print(f"invalid RAG_RETRIEVAL_MODE={raw!r}, falling back to hybrid")
         return "hybrid"
     return raw  # type: ignore[return-value]
 
@@ -126,6 +150,10 @@ def build_retriever_bundle(
         k=k, mode=mode, lexical_weight=lexical_weight
     )
     bm25 = build_bm25_retriever(chunks, resolved_k)
+    _debug_print(
+        f"index ready mode={resolved_mode} k={resolved_k} "
+        f"lexical_weight={resolved_weight} chunks={len(chunks)}"
+    )
     return RetrieverBundle(
         vectorstore=vectorstore,
         bm25=bm25,
@@ -178,7 +206,14 @@ def _merge_rrf(
             docs_by_key[key] = doc
 
     ordered_keys = sorted(scores, key=lambda key: scores[key], reverse=True)
-    return [docs_by_key[key] for key in ordered_keys[:k]]
+    merged = [docs_by_key[key] for key in ordered_keys[:k]]
+
+    if _debug_enabled():
+        _debug_print(f"RRF merge (k={k}, weights={weights}) -> {len(merged)} chunks")
+        for i, key in enumerate(ordered_keys[:k]):
+            _debug_print(f"  #{i + 1} score={scores[key]:.6f} {_doc_label(docs_by_key[key])}")
+
+    return merged
 
 
 def retrieve_documents(query: str, bundle: RetrieverBundle) -> List[Document]:
@@ -192,23 +227,50 @@ def retrieve_documents(query: str, bundle: RetrieverBundle) -> List[Document]:
         return []
 
     k = bundle.k
+    query_preview = query.strip().replace("\n", " ")
+    if len(query_preview) > 120:
+        query_preview = query_preview[:120] + "…"
+
+    _debug_print(
+        f"query={query_preview!r} mode={bundle.mode} k={k} "
+        f"lexical_weight={bundle.lexical_weight}"
+    )
 
     try:
         if bundle.mode == "semantic":
-            return bundle.vectorstore.similarity_search(query, k=k)
+            docs = bundle.vectorstore.similarity_search(query, k=k)
+            if _debug_enabled():
+                _debug_print(f"semantic-only -> {len(docs)} hits")
+                for i, doc in enumerate(docs):
+                    _debug_print(f"  sem #{i + 1} {_doc_label(doc)}")
+            return docs
 
         if bundle.mode == "lexical":
-            return bundle.bm25.invoke(query)
+            docs = bundle.bm25.invoke(query)
+            if _debug_enabled():
+                _debug_print(f"lexical-only -> {len(docs)} hits")
+                for i, doc in enumerate(docs):
+                    _debug_print(f"  lex #{i + 1} {_doc_label(doc)}")
+            return docs
 
         semantic = bundle.vectorstore.similarity_search(query, k=k)
         lexical = bundle.bm25.invoke(query)
+        if _debug_enabled():
+            _debug_print(f"semantic branch -> {len(semantic)} hits")
+            for i, doc in enumerate(semantic):
+                _debug_print(f"  sem #{i + 1} {_doc_label(doc)}")
+            _debug_print(f"lexical branch -> {len(lexical)} hits")
+            for i, doc in enumerate(lexical):
+                _debug_print(f"  lex #{i + 1} {_doc_label(doc)}")
+
         # Semantic branch at weight 1.0; lexical scaled so operators can bias toward keywords.
         return _merge_rrf(
             [semantic, lexical],
             weights=[1.0, bundle.lexical_weight],
             k=k,
         )
-    except Exception:
+    except Exception as exc:
+        _debug_print(f"retrieval failed: {type(exc).__name__}: {exc}")
         # Retrieval failure should not block generation; the agent can still answer without context.
         return []
 
@@ -220,8 +282,6 @@ def documents_to_sources(docs: List[Document]) -> List[dict]:
     Users care which file (and page) grounded the answer, not which overlapping chunk
     won the merge—so we dedupe by (path, page) rather than by chunk key.
     """
-    from pathlib import Path
-
     seen: set = set()
     sources: List[dict] = []
     for doc in docs:
@@ -238,4 +298,11 @@ def documents_to_sources(docs: List[Document]) -> List[dict]:
                 "path": source_path,
                 "page": page,
             })
+
+    if _debug_enabled():
+        _debug_print(f"citations -> {len(sources)} unique source(s) from {len(docs)} chunk(s)")
+        for i, src in enumerate(sources):
+            page = f" p.{src['page']}" if src.get("page") else ""
+            _debug_print(f"  cite #{i + 1} {src['file']}{page}")
+
     return sources

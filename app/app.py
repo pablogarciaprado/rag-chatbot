@@ -166,7 +166,7 @@ def query(request: QueryRequest) -> QueryResponse:
         messages = [{"role": m.role, "content": m.content} for m in request.history]
         messages.append({"role": "user", "content": question})
         if ENABLE_PRINT_DEBUG:
-            print("[DEBUG]: messages", messages)
+            print("[DEBUG][app.py]: messages", messages)
 
         answer, raw_sources = chain.get_response(messages)
         sources = [Source(**s) for s in raw_sources]
