@@ -91,7 +91,11 @@ def _load_documents() -> List[Any]:
             documents.extend(loader.load())
         elif suffix == ".pdf":
             loader = PyPDFLoader(str(path))
-            documents.extend(loader.load())
+            # Add required fields to the metadata before saving to the vector store
+            docs = loader.load()
+            for doc in docs:
+                doc.metadata = {**(doc.metadata or {}), "creator": "Pablo"}  # or f(path), JSON lookup, etc.
+            documents.extend(docs)
         elif suffix == ".pptx":
             loader = UnstructuredPowerPointLoader(str(path))
             try:
@@ -155,8 +159,18 @@ def _build_vectorstore(chunks: List[Any]) -> Any:
         embedding=embeddings,
     )
 
-def _retrieve_sources(messages: List[Dict[str, str]], vectorstore: InMemoryVectorStore) -> List[Dict[str, Any]]:
-    """Run a similarity search on the last user message and return deduplicated source metadata."""
+def _retrieve_sources(messages: List[Dict[str, str]], vectorstore: InMemoryVectorStore, number_of_sources: int = 4) -> List[Dict[str, Any]]:
+    """
+    Run a similarity search on the last user message and return deduplicated source metadata.
+    
+    Args:
+        messages: List[Dict[str, str]] - The messages to retrieve sources from.
+        vectorstore: InMemoryVectorStore - The vector store to use for the RAG system.
+        number_of_sources: int - The number of sources to retrieve from the vector store.
+
+    Returns:
+        List[Dict[str, Any]] - The deduplicated source metadata.
+    """
 
     last_user = next(
         (m for m in reversed(messages) if m.get("role") == "user"), None
@@ -165,7 +179,7 @@ def _retrieve_sources(messages: List[Dict[str, str]], vectorstore: InMemoryVecto
         return []
 
     try:
-        retrieved = vectorstore.similarity_search(last_user["content"], k=4)
+        retrieved = vectorstore.similarity_search(last_user["content"], k=number_of_sources)
     except Exception:
         return []
 
@@ -191,9 +205,10 @@ def _retrieve_sources(messages: List[Dict[str, str]], vectorstore: InMemoryVecto
 class RagWrapper:
     """Thin wrapper so callers can do `get_response(messages) -> (answer, sources)`."""
 
-    def __init__(self, agent_: Any, vectorstore_: Any):
+    def __init__(self, agent_: Any, vectorstore_: Any, number_of_sources: int = 4):
         self._agent = agent_
         self._vectorstore = vectorstore_
+        self._number_of_sources = number_of_sources
 
     def get_response(self, messages: List[Dict[str, str]]) -> Tuple[str, List[Dict[str, Any]]]:
         """
@@ -201,7 +216,7 @@ class RagWrapper:
         dicts and return ``(answer, sources)`` where *sources* is a deduplicated
         list of ``{"file", "path", "page"}`` dicts derived from the retrieved chunks.
         """
-        sources = _retrieve_sources(messages, self._vectorstore)
+        sources = _retrieve_sources(messages, self._vectorstore, self._number_of_sources)
 
         payload: Dict[str, Any] = {"messages": messages}
         state = self._agent.invoke(payload)
@@ -216,7 +231,7 @@ class RagWrapper:
         return str(state), sources
 
 
-def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool = False):
+def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool = False, number_of_sources: int = 4):
     """
     Build the agent-based RAG app (matches notebook's create_agent + dynamic_prompt).
 
@@ -256,23 +271,23 @@ def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool 
 
     # Build the prompt middleware.
     ## This will inject the retrieved context into the prompt.
-    middleware = build_prompt_middleware(vectorstore)
+    middleware = build_prompt_middleware(vectorstore, number_of_sources)
 
     # Build the agent.
     agent = create_agent(model=llm, tools=[], middleware=[middleware])
 
     # Return the RAG wrapper.
-    return RagWrapper(agent, vectorstore)
+    return RagWrapper(agent, vectorstore, number_of_sources)
 
 
 # Lazy singleton (build on first request)
 _CHAIN: Optional[Any] = None
 
 
-def get_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool = False):
+def get_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool = False, number_of_sources: int = 4):
     global _CHAIN
     if _CHAIN is None:
-        _CHAIN = build_rag_chain(llm_provider, debug)
+        _CHAIN = build_rag_chain(llm_provider, debug, number_of_sources)
     return _CHAIN
 
 def reset_chain() -> None:

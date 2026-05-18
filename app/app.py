@@ -20,6 +20,7 @@ from src.llm.gemini import GeminiFlashLiteProvider
 from app.schemas import QueryRequest, QueryResponse, Source
 
 ENABLE_PRINT_DEBUG = False
+NUMBER_OF_SOURCES = 4
 
 # Compute repo root from this file location (`.../app/app.py` -> repo root).
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -159,7 +160,7 @@ def query(request: QueryRequest) -> QueryResponse:
 
     try:
         llm_provider = GeminiFlashLiteProvider() # this could be changed depending on the provider to use
-        chain = get_chain(llm_provider, debug=ENABLE_PRINT_DEBUG)
+        chain = get_chain(llm_provider, debug=ENABLE_PRINT_DEBUG, number_of_sources=NUMBER_OF_SOURCES)
 
         # Build the full messages list: prior turns + the current question.
         messages = [{"role": m.role, "content": m.content} for m in request.history]

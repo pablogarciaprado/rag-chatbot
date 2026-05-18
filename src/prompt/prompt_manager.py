@@ -29,9 +29,16 @@ def _extract_last_query(last_msg: Any) -> str:
 
     return ""
 
-def build_prompt_middleware(vectorstore: InMemoryVectorStore):
+def build_prompt_middleware(vectorstore: InMemoryVectorStore, number_of_sources: int = 4):
     """
     Build the prompt middleware for the RAG system.
+
+    Args:
+        vectorstore: InMemoryVectorStore - The vector store to use for the RAG system.
+        number_of_sources: int - The number of sources to retrieve from the vector store.
+
+    Returns:
+        A prompt middleware function.
     """
     from langchain.agents.middleware import ModelRequest, dynamic_prompt
 
@@ -45,7 +52,7 @@ def build_prompt_middleware(vectorstore: InMemoryVectorStore):
         retrieved_docs: List[Any] = []
         if last_query.strip():
             try:
-                retrieved_docs = vectorstore.similarity_search(last_query)
+                retrieved_docs = vectorstore.similarity_search(last_query, k=number_of_sources)
             except Exception as e:
                 # Keep the system message without RAG context.
                 print(f"Similarity search failed, continuing without RAG: {e}")
