@@ -6,7 +6,8 @@ Builds the prompt middleware for the RAG system.
 
 from typing import Any, List
 from pathlib import Path
-from langchain_core.vectorstores import InMemoryVectorStore
+
+from src.retrieval.hybrid import RetrieverBundle, retrieve_documents
 
 def _extract_last_query(last_msg: Any) -> str:
     """
@@ -29,13 +30,12 @@ def _extract_last_query(last_msg: Any) -> str:
 
     return ""
 
-def build_prompt_middleware(vectorstore: InMemoryVectorStore, number_of_sources: int = 4):
+def build_prompt_middleware(retriever: RetrieverBundle):
     """
     Build the prompt middleware for the RAG system.
 
     Args:
-        vectorstore: InMemoryVectorStore - The vector store to use for the RAG system.
-        number_of_sources: int - The number of sources to retrieve from the vector store.
+        retriever: RetrieverBundle - Semantic and/or lexical retrievers plus mode config.
 
     Returns:
         A prompt middleware function.
@@ -51,11 +51,9 @@ def build_prompt_middleware(vectorstore: InMemoryVectorStore, number_of_sources:
 
         retrieved_docs: List[Any] = []
         if last_query.strip():
-            try:
-                retrieved_docs = vectorstore.similarity_search(last_query, k=number_of_sources)
-            except Exception as e:
-                # Keep the system message without RAG context.
-                print(f"Similarity search failed, continuing without RAG: {e}")
+            retrieved_docs = retrieve_documents(last_query, retriever)
+            if not retrieved_docs:
+                print("Retrieval returned no documents, continuing without RAG context.")
 
         docs_content = "\n\n".join(doc.page_content for doc in retrieved_docs)
 

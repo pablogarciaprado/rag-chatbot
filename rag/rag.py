@@ -22,6 +22,12 @@ from langchain_core.vectorstores import InMemoryVectorStore
 from src.llm.base import BaseLLMProvider
 from src.llm.gemini import GeminiFlashLiteProvider
 from src.prompt.prompt_manager import build_prompt_middleware
+from src.retrieval.hybrid import (
+    RetrieverBundle,
+    build_retriever_bundle,
+    documents_to_sources,
+    retrieve_documents,
+)
 
 # Resolve repository root from `.../rag/rag.py`.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -159,56 +165,26 @@ def _build_vectorstore(chunks: List[Any]) -> Any:
         embedding=embeddings,
     )
 
-def _retrieve_sources(messages: List[Dict[str, str]], vectorstore: InMemoryVectorStore, number_of_sources: int = 4) -> List[Dict[str, Any]]:
-    """
-    Run a similarity search on the last user message and return deduplicated source metadata.
-    
-    Args:
-        messages: List[Dict[str, str]] - The messages to retrieve sources from.
-        vectorstore: InMemoryVectorStore - The vector store to use for the RAG system.
-        number_of_sources: int - The number of sources to retrieve from the vector store.
-
-    Returns:
-        List[Dict[str, Any]] - The deduplicated source metadata.
-    """
-
+def _retrieve_sources(
+    messages: List[Dict[str, str]],
+    retriever: RetrieverBundle,
+) -> List[Dict[str, Any]]:
+    """Retrieve chunks for the last user message and return deduplicated source metadata."""
     last_user = next(
         (m for m in reversed(messages) if m.get("role") == "user"), None
     )
-    if not last_user or not vectorstore:
+    if not last_user:
         return []
 
-    try:
-        retrieved = vectorstore.similarity_search(last_user["content"], k=number_of_sources)
-    except Exception:
-        return []
-
-    seen: set = set()
-    sources: List[Dict[str, Any]] = []
-    for doc in retrieved:
-        meta = doc.metadata or {}
-        source_path = meta.get("source", "")
-        raw_page = meta.get("page")
-        # PyPDFLoader uses 0-based page numbers; display as 1-based.
-        page = (raw_page + 1) if isinstance(raw_page, int) else None
-        key = (source_path, page)
-        if key not in seen:
-            seen.add(key)
-            sources.append({
-                "file": Path(source_path).name if source_path else "Unknown",
-                "path": source_path,
-                "page": page,
-            })
-
-    return sources
+    retrieved = retrieve_documents(last_user["content"], retriever)
+    return documents_to_sources(retrieved)
 
 class RagWrapper:
     """Thin wrapper so callers can do `get_response(messages) -> (answer, sources)`."""
 
-    def __init__(self, agent_: Any, vectorstore_: Any, number_of_sources: int = 4):
+    def __init__(self, agent_: Any, retriever_: RetrieverBundle):
         self._agent = agent_
-        self._vectorstore = vectorstore_
-        self._number_of_sources = number_of_sources
+        self._retriever = retriever_
 
     def get_response(self, messages: List[Dict[str, str]]) -> Tuple[str, List[Dict[str, Any]]]:
         """
@@ -216,7 +192,7 @@ class RagWrapper:
         dicts and return ``(answer, sources)`` where *sources* is a deduplicated
         list of ``{"file", "path", "page"}`` dicts derived from the retrieved chunks.
         """
-        sources = _retrieve_sources(messages, self._vectorstore, self._number_of_sources)
+        sources = _retrieve_sources(messages, self._retriever)
 
         payload: Dict[str, Any] = {"messages": messages}
         state = self._agent.invoke(payload)
@@ -265,19 +241,20 @@ def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool 
     ## We are using an in-memory vector store to store the chunks,
     ## this is not scalable for large datasets, but it is convenient for a simple application.
     vectorstore = _build_vectorstore(chunks)
+    retriever = build_retriever_bundle(vectorstore, chunks, k=number_of_sources)
 
     # Build the LLM.
     llm = llm_provider.build_llm()
 
     # Build the prompt middleware.
     ## This will inject the retrieved context into the prompt.
-    middleware = build_prompt_middleware(vectorstore, number_of_sources)
+    middleware = build_prompt_middleware(retriever)
 
     # Build the agent.
     agent = create_agent(model=llm, tools=[], middleware=[middleware])
 
     # Return the RAG wrapper.
-    return RagWrapper(agent, vectorstore, number_of_sources)
+    return RagWrapper(agent, retriever)
 
 
 # Lazy singleton (build on first request)

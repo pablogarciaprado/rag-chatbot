@@ -19,8 +19,8 @@ from src.llm.gemini import GeminiFlashLiteProvider
 
 from app.schemas import QueryRequest, QueryResponse, Source
 
-ENABLE_PRINT_DEBUG = False
-NUMBER_OF_SOURCES = 4
+ENABLE_PRINT_DEBUG = os.getenv("ENABLE_PRINT_DEBUG", "False").lower() == "true"
+NUMBER_OF_SOURCES = int(os.getenv("RAG_NUMBER_OF_SOURCES", "4"))
 
 # Compute repo root from this file location (`.../app/app.py` -> repo root).
 _REPO_ROOT = Path(__file__).resolve().parent.parent
