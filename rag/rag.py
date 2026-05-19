@@ -35,12 +35,16 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 # Load repo-root `.env` when present.
 load_dotenv(dotenv_path=str(_REPO_ROOT / ".env"), override=False)
 
-UPLOADED_DIR = os.getenv(
-    "RAG_UPLOADED_DIR",
-    str(_REPO_ROOT / "context_files"),
-)
-
 SUPPORTED_EXTENSIONS = {".docx", ".pdf", ".txt", ".md", ".pptx"}
+
+
+def get_uploaded_dir() -> Path:
+    """Return the upload directory, resolving relative paths against the repo root."""
+    raw = os.getenv("RAG_UPLOADED_DIR", "context_files")
+    path = Path(raw)
+    if not path.is_absolute():
+        path = _REPO_ROOT / path
+    return path.resolve()
 
 
 def _ensure_nltk_resource_from_error(error: LookupError) -> bool:
@@ -79,7 +83,7 @@ def _load_documents() -> List[Any]:
         UnstructuredPowerPointLoader, # For .pptx files
     )
 
-    base_dir = Path(UPLOADED_DIR)
+    base_dir = get_uploaded_dir()
     if not base_dir.exists():
         return []
 
@@ -207,11 +211,24 @@ class RagWrapper:
         return str(state), sources
 
 
+def count_uploaded_files() -> int:
+    """Count supported files under UPLOADED_DIR."""
+    base_dir = get_uploaded_dir()
+    if not base_dir.exists():
+        return 0
+
+    return sum(
+        1
+        for path in base_dir.rglob("*")
+        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+    )
+
+
 def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool = False, number_of_sources: int = 4):
     """
     Build the agent-based RAG app (matches notebook's create_agent + dynamic_prompt).
 
-    Returns an object with `.invoke(messages: list[dict]) -> str`.
+    Returns ``(RagWrapper, stats)`` where *stats* has document and chunk counts.
     """
     from langchain.agents import create_agent
 
@@ -226,7 +243,7 @@ def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool 
         supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
         raise RuntimeError(
             "No supported files found under "
-            f"UPLOADED_DIR={UPLOADED_DIR!r}. Upload files via the UI. "
+            f"upload dir={get_uploaded_dir()!s}. Upload files via the UI. "
             f"Supported extensions: {supported}."
         )
 
@@ -252,21 +269,41 @@ def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool 
     # Build the agent.
     agent = create_agent(model=llm, tools=[], middleware=[middleware])
 
-    # Return the RAG wrapper.
-    return RagWrapper(agent, retriever)
+    stats = {"documents": len(documents), "chunks": len(chunks)}
+    return RagWrapper(agent, retriever), stats
 
 
-# Lazy singleton (build on first request)
-_CHAIN: Optional[Any] = None
+# In-memory index (built explicitly via index_chain()).
+_CHAIN: Optional[RagWrapper] = None
 
 
-def get_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool = False, number_of_sources: int = 4):
+def is_indexed() -> bool:
+    return _CHAIN is not None
+
+
+def index_chain(
+    llm_provider: Optional[BaseLLMProvider] = None,
+    debug: bool = False,
+    number_of_sources: int = 4,
+) -> Dict[str, int]:
+    """Load uploaded files, chunk, embed, and build the in-memory index."""
     global _CHAIN
+    chain, stats = build_rag_chain(llm_provider, debug, number_of_sources)
+    _CHAIN = chain
+    return stats
+
+
+def get_chain() -> RagWrapper:
     if _CHAIN is None:
-        _CHAIN = build_rag_chain(llm_provider, debug, number_of_sources)
+        supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+        raise RuntimeError(
+            "Documents have not been indexed yet. Upload files and click Index "
+            f"(or POST /index). Supported extensions: {supported}."
+        )
     return _CHAIN
 
+
 def reset_chain() -> None:
-    """Force the in-memory RAG index to be rebuilt on next request."""
+    """Clear the in-memory index (e.g. after new uploads)."""
     global _CHAIN
     _CHAIN = None

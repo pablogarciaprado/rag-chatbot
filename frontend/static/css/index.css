@@ -177,6 +177,12 @@ h1 {
 #uploadStatus.success { color: var(--success); }
 #uploadStatus.error   { color: var(--danger); }
 
+.upload-actions {
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* -- Button -- */
 .btn {
   display: inline-flex;

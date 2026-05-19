@@ -38,7 +38,7 @@
           </span>
           Upload Documents
         </div>
-        <p class="card-description">Index files so the assistant can reference them when answering questions.</p>
+        <p class="card-description">Upload documents, then index them before asking questions.</p>
 
         <input id="fileInput" type="file" multiple style="display:none" />
         <label for="fileInput" class="upload-zone" id="uploadZone">
@@ -52,6 +52,11 @@
         </label>
 
         <div id="uploadStatus"></div>
+        <div class="upload-actions">
+          <button id="indexBtn" class="btn btn-primary" type="button" disabled>
+            Index documents
+          </button>
+        </div>
       </div>
 
       <!-- Chat card -->
@@ -67,7 +72,7 @@
           </div>
           <button id="clearBtn" class="btn btn-ghost" type="button">New chat</button>
         </div>
-        <p class="card-description">Ask questions about your uploaded documents. The assistant remembers the full conversation.</p>
+        <p class="card-description">Ask questions about your indexed documents. The assistant remembers the full conversation.</p>
 
         <!-- Message history -->
         <div id="chatWindow" class="chat-window">
@@ -101,6 +106,6 @@
 
     </div>
 
-    <script src="/static/app.js" defer></script>
+    <script src="/static/app.js?v=2" defer></script>
   </body>
 </html>

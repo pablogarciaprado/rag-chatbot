@@ -22,9 +22,10 @@ flowchart TB
     classDef generate fill:#fce8e6,stroke:#ea4335,stroke-width:2px,color:#c5221f
     classDef io fill:#fff,stroke:#9aa0a6,stroke-width:2px,stroke-dasharray:4 2,color:#3c4043
 
-    subgraph INDEX["Indexing — upload or chain rebuild"]
+    subgraph INDEX["Indexing — explicit POST /index"]
         direction LR
         UP([Upload documents]):::io
+        IDX([Index documents]):::io
         LOAD[Load & parse<br/>pdf · docx · txt · md · pptx]:::process
         CHUNK[Chunk<br/>1000 chars · 200 overlap]:::process
         EMB[Embed chunks<br/>gemini-embedding-2-preview]:::process
@@ -32,7 +33,7 @@ flowchart TB
         VDB[(InMemoryVectorStore<br/>cosine similarity)]:::store
         LEX[(BM25 retriever)]:::store
 
-        UP --> LOAD --> CHUNK
+        UP --> IDX --> LOAD --> CHUNK
         CHUNK --> EMB --> VDB
         CHUNK --> BM25IDX --> LEX
     end
@@ -173,7 +174,33 @@ Upload one or more files for indexing. Supported extensions: `.docx`, `.pdf`, `.
 }
 ```
 
-Re-uploading triggers a rebuild of the in-memory index on the next query.
+Re-uploading clears the current index; call `POST /index` again before querying.
+
+### `GET /index/status`
+
+Returns whether documents are indexed and how many supported files are on disk.
+
+**Response:**
+
+```json
+{
+  "indexed": true,
+  "file_count": 2
+}
+```
+
+### `POST /index`
+
+Build the in-memory index from uploaded files. Required before querying.
+
+**Response:**
+
+```json
+{
+  "documents": 2,
+  "chunks": 18
+}
+```
 
 ### `POST /query`
 
@@ -209,12 +236,13 @@ Ask a question over the indexed documents.
 1. Start the server: `python3 main.py`
 2. Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
 3. Upload documents in the UI (or call `POST /upload`)
-4. Ask questions in the chat UI or via `POST /query`
-5. Inspect source pills under each assistant reply
+4. Click **Index documents** (or call `POST /index`)
+5. Ask questions in the chat UI or via `POST /query`
+6. Inspect source pills under each assistant reply
 
 ## Limitations
 
-- **In-memory only** — the vector store and BM25 index live in process memory and are rebuilt when the chain is reset (upload, server restart). Not suitable for large production corpora without swapping in a persistent vector database.
+- **In-memory only** — the vector store and BM25 index live in process memory and are rebuilt when you call `POST /index` (or after new uploads, until you re-index). Not suitable for large production corpora without swapping in a persistent vector database.
 - **Exact vector search** — no HNSW/IVF indexing; every query compares against all chunk embeddings. Fast enough for small document sets.
 - **Fresh start on boot** — `context_files/` is emptied when the server starts; persist files elsewhere if you need them across restarts.
 - **Single-provider LLM** — defaults to Gemini via `langchain-google-genai`; other providers can be wired through `src/llm/base.py`.

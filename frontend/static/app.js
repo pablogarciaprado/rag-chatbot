@@ -4,6 +4,9 @@ const $ = (id) => document.getElementById(id);
 // Does NOT include the in-flight message — it is appended only after success.
 let conversationHistory = [];
 let isThinking = false;
+let isIndexed = false;
+let isIndexing = false;
+let uploadedFileCount = 0;
 
 // ── Chat rendering ────────────────────────────────────────────────────────────
 
@@ -134,6 +137,11 @@ async function sendMessage() {
     return;
   }
 
+  if (!isIndexed) {
+    setStatus(statusEl, "Index your documents before asking questions.", "error");
+    return;
+  }
+
   // Optimistically render the user bubble and clear the input.
   appendMessage("user", question);
   textarea.value = "";
@@ -237,10 +245,16 @@ async function handleFiles(fileList) {
     const data    = await uploadFiles(files);
     const saved   = data.saved?.length   ?? 0;
     const skipped = data.skipped?.length ?? 0;
-    const msg = `${saved} file${saved !== 1 ? "s" : ""} uploaded successfully.${
+    const msg = `${saved} file${saved !== 1 ? "s" : ""} uploaded. Click Index documents to make them searchable.${
       skipped ? ` ${skipped} unsupported file${skipped !== 1 ? "s" : ""} skipped.` : ""
     }`;
     setUploadStatus(statusEl, msg, "success");
+    isIndexed = false;
+    if (saved > 0) {
+      uploadedFileCount = Math.max(uploadedFileCount, saved);
+      updateIndexButton();
+    }
+    await refreshIndexStatus();
   } catch (e) {
     setUploadStatus(statusEl, e?.message ?? "Upload error.", "error");
   } finally {
@@ -248,11 +262,83 @@ async function handleFiles(fileList) {
   }
 }
 
+// ── Index documents ───────────────────────────────────────────────────────────
+
+async function indexDocuments() {
+  if (isIndexing) return;
+
+  const statusEl = $("uploadStatus");
+  const indexBtn = $("indexBtn");
+
+  isIndexing = true;
+  indexBtn.disabled = true;
+  setUploadStatus(statusEl, "Indexing documents\u2026", "");
+
+  try {
+    const res = await fetch("/index", { method: "POST" });
+
+    if (!res.ok) {
+      let detail = `Error ${res.status}`;
+      try {
+        const body = await res.json();
+        detail = body.detail ?? detail;
+      } catch {
+        detail = (await res.text()) || detail;
+      }
+      setUploadStatus(statusEl, detail, "error");
+      return;
+    }
+
+    const data = await res.json();
+    const docs = data.documents ?? 0;
+    const chunks = data.chunks ?? 0;
+    isIndexed = true;
+    setUploadStatus(
+      statusEl,
+      `Indexed ${docs} document${docs !== 1 ? "s" : ""} (${chunks} chunk${chunks !== 1 ? "s" : ""}). You can ask questions now.`,
+      "success",
+    );
+  } catch (e) {
+    setUploadStatus(statusEl, e?.message ?? "Indexing failed.", "error");
+  } finally {
+    isIndexing = false;
+    updateIndexButton();
+  }
+}
+
+async function refreshIndexStatus() {
+  try {
+    const res = await fetch("/index/status");
+    if (!res.ok) return;
+
+    const data = await res.json();
+    isIndexed = Boolean(data.indexed);
+    const count = Number(data.file_count) || 0;
+    if (count > 0) {
+      uploadedFileCount = count;
+    }
+    updateIndexButton();
+  } catch {
+    // Keep current uploadedFileCount if status check fails.
+  }
+}
+
+function updateIndexButton() {
+  const indexBtn = $("indexBtn");
+  if (!indexBtn) return;
+
+  const canIndex = !isIndexing && uploadedFileCount > 0;
+  indexBtn.disabled = !canIndex;
+  indexBtn.textContent = isIndexed ? "Re-index documents" : "Index documents";
+}
+
 // ── Wire-up ───────────────────────────────────────────────────────────────────
 
 function wireUpload() {
   const zone      = $("uploadZone");
   const fileInput = $("fileInput");
+
+  $("indexBtn").addEventListener("click", indexDocuments);
 
   fileInput.addEventListener("change", () => {
     if (fileInput.files?.length) handleFiles(fileInput.files);
@@ -305,3 +391,4 @@ function setUploadStatus(el, message, type) {
 
 wireUpload();
 wireChat();
+refreshIndexStatus();

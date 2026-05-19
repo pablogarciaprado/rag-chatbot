@@ -39,3 +39,15 @@ class QueryResponse(BaseModel):
     """
     answer: str
     sources: List[Source] = []
+
+
+class IndexStatusResponse(BaseModel):
+    """Whether documents are indexed and how many files are on disk."""
+    indexed: bool
+    file_count: int
+
+
+class IndexResponse(BaseModel):
+    """Result of building the in-memory index."""
+    documents: int
+    chunks: int

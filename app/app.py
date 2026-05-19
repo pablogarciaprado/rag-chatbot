@@ -14,10 +14,24 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from rag.rag import get_chain, reset_chain, SUPPORTED_EXTENSIONS
+from rag.rag import (
+    count_uploaded_files,
+    get_chain,
+    get_uploaded_dir,
+    index_chain,
+    is_indexed,
+    reset_chain,
+    SUPPORTED_EXTENSIONS,
+)
 from src.llm.gemini import GeminiFlashLiteProvider
 
-from app.schemas import QueryRequest, QueryResponse, Source
+from app.schemas import (
+    IndexResponse,
+    IndexStatusResponse,
+    QueryRequest,
+    QueryResponse,
+    Source,
+)
 
 ENABLE_PRINT_DEBUG = os.getenv("ENABLE_PRINT_DEBUG", "False").lower() == "true"
 NUMBER_OF_SOURCES = int(os.getenv("RAG_NUMBER_OF_SOURCES", "4"))
@@ -25,20 +39,10 @@ NUMBER_OF_SOURCES = int(os.getenv("RAG_NUMBER_OF_SOURCES", "4"))
 # Compute repo root from this file location (`.../app/app.py` -> repo root).
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Upload storage defaults to `<repo>/context_files/`.
-def _uploaded_dir() -> Path:
-    return Path(
-        os.getenv(
-            "RAG_UPLOADED_DIR",
-            str(_REPO_ROOT / "context_files"),
-        )
-    )
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Clear previously uploaded files so RAG starts fresh."""
-    uploaded_dir = _uploaded_dir()
+    uploaded_dir = get_uploaded_dir()
     uploaded_dir.mkdir(parents=True, exist_ok=True)
 
     # Remove contents (but keep the directory itself).
@@ -48,7 +52,7 @@ async def lifespan(app: FastAPI):
         elif child.is_dir():
             shutil.rmtree(child)
 
-    # Ensure the in-memory index rebuilds on first `/query` after restart.
+    # Start with no in-memory index; user must upload and index explicitly.
     reset_chain()
     yield
     # Ensure the in-memory index rebuilds on shutdown.
@@ -87,7 +91,7 @@ def health():
 def upload_files(files: List[UploadFile] = File(...)):
     """Upload multiple documents for indexing (supported: docx/pdf/txt/md)."""
     supported = SUPPORTED_EXTENSIONS
-    uploaded_dir = _uploaded_dir()
+    uploaded_dir = get_uploaded_dir()
     uploaded_dir.mkdir(parents=True, exist_ok=True)
 
     def _unique_dest(filename: str) -> Path:
@@ -137,9 +141,38 @@ def upload_files(files: List[UploadFile] = File(...)):
             detail=f"No supported files were uploaded. Supported: {supported_str}. Skipped: {skipped_str}.",
         )
 
-    # Next `/query` should rebuild the in-memory vector store.
+    # New uploads invalidate the current index until the user re-indexes.
     reset_chain()
     return {"saved": saved, "skipped": skipped}
+
+
+@app.get("/index/status", response_model=IndexStatusResponse)
+def index_status() -> IndexStatusResponse:
+    """Return whether documents are indexed and how many files are uploaded."""
+    return IndexStatusResponse(
+        indexed=is_indexed(),
+        file_count=count_uploaded_files(),
+    )
+
+
+@app.post("/index", response_model=IndexResponse)
+def index_documents() -> IndexResponse:
+    """Build the in-memory vector store from uploaded files."""
+    if count_uploaded_files() == 0:
+        supported_str = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+        raise HTTPException(
+            status_code=400,
+            detail=f"No supported files to index. Upload files first. Supported: {supported_str}.",
+        )
+
+    try:
+        stats = index_chain(debug=ENABLE_PRINT_DEBUG, number_of_sources=NUMBER_OF_SOURCES)
+        return IndexResponse(**stats)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # Query endpoint
 ## response_model tells FastAPI what Pydantic model the response should conform to.
@@ -159,8 +192,7 @@ def query(request: QueryRequest) -> QueryResponse:
         raise HTTPException(status_code=400, detail="Question cannot be empty")
 
     try:
-        llm_provider = GeminiFlashLiteProvider() # this could be changed depending on the provider to use
-        chain = get_chain(llm_provider, debug=ENABLE_PRINT_DEBUG, number_of_sources=NUMBER_OF_SOURCES)
+        chain = get_chain()
 
         # Build the full messages list: prior turns + the current question.
         messages = [{"role": m.role, "content": m.content} for m in request.history]
