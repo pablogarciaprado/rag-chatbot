@@ -246,3 +246,19 @@ Ask a question over the indexed documents.
 - **Exact vector search** — no HNSW/IVF indexing; every query compares against all chunk embeddings. Fast enough for small document sets.
 - **Fresh start on boot** — `context_files/` is emptied when the server starts; persist files elsewhere if you need them across restarts.
 - **Single-provider LLM** — defaults to Gemini via `langchain-google-genai`; other providers can be wired through `src/llm/base.py`.
+
+## Troubleshooting
+
+### The chatbot does not find the relevant documentation
+
+The system prompt is very strict and mandates the llm to answer only when it's 100% sure. In Hybrid mode, **the problem could come from how the retrieved sources are ranked, scored, and merged**. If the query mentions a very specfic keyword, the lexical branch would probably have the better passages, but they might get ignored after narrowing down the final number of sources during RRF for two main reasons:
+
+- The semantic branch is set to prevail by default over the lexical one during RRF, because `RAG_LEXICAL_WEIGHT=0.5`.
+- The number of sources in `RAG_NUMBER_OF_SOURCES` is too low, and the relevant information is ranked poorly, but close to the `RAG_NUMBER_OF_SOURCES`, so they are ignored.
+
+#### Practical fixes
+
+- Raise `RAG_NUMBER_OF_SOURCES` so poorly runked, but relevant chunks can enter the pool.
+- Raise `RAG_LEXICAL_WEIGHT` (e.g. 1.0 or higher) so BM25 matches for proper names compete fairly in RRF.
+- Retrieve more per branch before merging (e.g. 2k or 3k from each, then RRF down to k).
+- Detect keyword names in the query and boost lexical-only or filter chunks containing those tokens. This could be done depending on the keyword topic, and providing a curated list of those entities.
