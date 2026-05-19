@@ -45,6 +45,7 @@ class IndexStatusResponse(BaseModel):
     """Whether documents are indexed and how many files are on disk."""
     indexed: bool
     file_count: int
+    files: List[str] = []
 
 
 class IndexResponse(BaseModel):

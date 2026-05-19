@@ -60,6 +60,7 @@ class RetrieverBundle:
     bm25: Any  # BM25Retriever from langchain_community
     mode: RetrievalMode
     k: int
+    fetch_k: int  # candidates per branch before hybrid RRF (typically 2 * k)
     lexical_weight: float
 
 
@@ -114,6 +115,11 @@ def get_retrieval_config(
     return resolved_mode, resolved_k, resolved_weight
 
 
+def _branch_fetch_k(k: int, *, num_chunks: int) -> int:
+    """Candidates to pull from each branch in hybrid mode (capped by corpus size)."""
+    return min(2 * k, num_chunks) if num_chunks else k
+
+
 def build_bm25_retriever(chunks: List[Document], k: int) -> Any:
     """
     Build an in-memory BM25 index over the same chunks as the vector store.
@@ -149,16 +155,19 @@ def build_retriever_bundle(
     resolved_mode, resolved_k, resolved_weight = get_retrieval_config(
         k=k, mode=mode, lexical_weight=lexical_weight
     )
+    num_chunks = len(chunks)
+    fetch_k = _branch_fetch_k(resolved_k, num_chunks=num_chunks)
     bm25 = build_bm25_retriever(chunks, resolved_k)
     _debug_print(
-        f"index ready mode={resolved_mode} k={resolved_k} "
-        f"lexical_weight={resolved_weight} chunks={len(chunks)}"
+        f"index ready mode={resolved_mode} k={resolved_k} fetch_k={fetch_k} "
+        f"lexical_weight={resolved_weight} chunks={num_chunks}"
     )
     return RetrieverBundle(
         vectorstore=vectorstore,
         bm25=bm25,
         mode=resolved_mode,
         k=resolved_k,
+        fetch_k=fetch_k,
         lexical_weight=resolved_weight,
     )
 
@@ -231,8 +240,9 @@ def retrieve_documents(query: str, bundle: RetrieverBundle) -> List[Document]:
     if len(query_preview) > 120:
         query_preview = query_preview[:120] + "…"
 
+    fetch_k = bundle.fetch_k
     _debug_print(
-        f"query={query_preview!r} mode={bundle.mode} k={k} "
+        f"query={query_preview!r} mode={bundle.mode} k={k} fetch_k={fetch_k} "
         f"lexical_weight={bundle.lexical_weight}"
     )
 
@@ -253,13 +263,22 @@ def retrieve_documents(query: str, bundle: RetrieverBundle) -> List[Document]:
                     _debug_print(f"  lex #{i + 1} {_doc_label(doc)}")
             return docs
 
-        semantic = bundle.vectorstore.similarity_search(query, k=k)
-        lexical = bundle.bm25.invoke(query)
+        semantic = bundle.vectorstore.similarity_search(query, k=fetch_k)
+        prev_bm25_k = bundle.bm25.k
+        # BM25’s k is fixed on the retriever object,
+        # so we need to set it to the fetch_k for the lexical branch.
+        # If we run on lexical only mode, fetch_k is set to the number of sources.
+        try:
+            bundle.bm25.k = fetch_k
+            lexical = bundle.bm25.invoke(query)
+        finally:
+            bundle.bm25.k = prev_bm25_k
+
         if _debug_enabled():
-            _debug_print(f"semantic branch -> {len(semantic)} hits")
+            _debug_print(f"semantic branch (fetch_k={fetch_k}) -> {len(semantic)} hits")
             for i, doc in enumerate(semantic):
                 _debug_print(f"  sem #{i + 1} {_doc_label(doc)}")
-            _debug_print(f"lexical branch -> {len(lexical)} hits")
+            _debug_print(f"lexical branch (fetch_k={fetch_k}) -> {len(lexical)} hits")
             for i, doc in enumerate(lexical):
                 _debug_print(f"  lex #{i + 1} {_doc_label(doc)}")
 

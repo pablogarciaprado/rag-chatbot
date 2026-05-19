@@ -7,6 +7,7 @@ let isThinking = false;
 let isIndexed = false;
 let isIndexing = false;
 let uploadedFileCount = 0;
+let uploadedFileNames = [];
 
 // ── Chat rendering ────────────────────────────────────────────────────────────
 
@@ -243,15 +244,15 @@ async function handleFiles(fileList) {
 
   try {
     const data    = await uploadFiles(files);
-    const saved   = data.saved?.length   ?? 0;
-    const skipped = data.skipped?.length ?? 0;
-    const msg = `${saved} file${saved !== 1 ? "s" : ""} uploaded. Click Index documents to make them searchable.${
-      skipped ? ` ${skipped} unsupported file${skipped !== 1 ? "s" : ""} skipped.` : ""
+    const saved   = data.saved ?? [];
+    const skipped = data.skipped ?? [];
+    const msg = `${saved.length} file${saved.length !== 1 ? "s" : ""} uploaded. Click Index documents to make them searchable.${
+      skipped.length ? ` ${skipped.length} unsupported file${skipped.length !== 1 ? "s" : ""} skipped.` : ""
     }`;
     setUploadStatus(statusEl, msg, "success");
     isIndexed = false;
-    if (saved > 0) {
-      uploadedFileCount = Math.max(uploadedFileCount, saved);
+    if (saved.length > 0) {
+      addUploadedFiles(saved);
       updateIndexButton();
     }
     await refreshIndexStatus();
@@ -295,7 +296,7 @@ async function indexDocuments() {
     isIndexed = true;
     setUploadStatus(
       statusEl,
-      `Indexed ${docs} document${docs !== 1 ? "s" : ""} (${chunks} chunk${chunks !== 1 ? "s" : ""}). You can ask questions now.`,
+      `Indexed ${docs} parsed unit${docs !== 1 ? "s" : ""} (${chunks} chunk${chunks !== 1 ? "s" : ""}). You can ask questions now.`,
       "success",
     );
   } catch (e) {
@@ -313,9 +314,15 @@ async function refreshIndexStatus() {
 
     const data = await res.json();
     isIndexed = Boolean(data.indexed);
-    const count = Number(data.file_count) || 0;
-    if (count > 0) {
-      uploadedFileCount = count;
+    if (Array.isArray(data.files)) {
+      uploadedFileNames = data.files;
+      uploadedFileCount = uploadedFileNames.length;
+      renderUploadedFileList();
+    } else {
+      const count = Number(data.file_count) || 0;
+      if (count > 0) {
+        uploadedFileCount = count;
+      }
     }
     updateIndexButton();
   } catch {
@@ -387,6 +394,54 @@ function setStatus(el, message, type) {
 function setUploadStatus(el, message, type) {
   el.textContent = message;
   el.className = type; // "success" | "error" | ""
+}
+
+function addUploadedFiles(names) {
+  for (const name of names) {
+    if (!uploadedFileNames.includes(name)) {
+      uploadedFileNames.push(name);
+    }
+  }
+  uploadedFileNames.sort((a, b) => a.localeCompare(b));
+  uploadedFileCount = uploadedFileNames.length;
+  renderUploadedFileList();
+}
+
+function renderUploadedFileList() {
+  const listEl = $("uploadedFileList");
+  if (!listEl) return;
+
+  listEl.innerHTML = "";
+
+  if (uploadedFileNames.length === 0) {
+    listEl.hidden = true;
+    return;
+  }
+
+  listEl.hidden = false;
+
+  for (const name of uploadedFileNames) {
+    const item = document.createElement("li");
+    item.className = "uploaded-file-item";
+
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("width", "14");
+    icon.setAttribute("height", "14");
+    icon.setAttribute("viewBox", "0 0 24 24");
+    icon.setAttribute("fill", "none");
+    icon.setAttribute("stroke", "currentColor");
+    icon.setAttribute("stroke-width", "2");
+    icon.setAttribute("stroke-linecap", "round");
+    icon.setAttribute("stroke-linejoin", "round");
+    icon.innerHTML = `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>`;
+
+    const label = document.createElement("span");
+    label.textContent = name;
+
+    item.appendChild(icon);
+    item.appendChild(label);
+    listEl.appendChild(item);
+  }
 }
 
 wireUpload();

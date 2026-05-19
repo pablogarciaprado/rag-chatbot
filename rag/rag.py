@@ -211,17 +211,22 @@ class RagWrapper:
         return str(state), sources
 
 
-def count_uploaded_files() -> int:
-    """Count supported files under UPLOADED_DIR."""
+def list_uploaded_files() -> list[str]:
+    """Return supported file names under UPLOADED_DIR (sorted)."""
     base_dir = get_uploaded_dir()
     if not base_dir.exists():
-        return 0
+        return []
 
-    return sum(
-        1
+    return sorted(
+        path.name
         for path in base_dir.rglob("*")
         if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
     )
+
+
+def count_uploaded_files() -> int:
+    """Count supported files under UPLOADED_DIR."""
+    return len(list_uploaded_files())
 
 
 def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool = False, number_of_sources: int = 4):

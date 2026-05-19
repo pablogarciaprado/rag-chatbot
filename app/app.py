@@ -20,6 +20,7 @@ from rag.rag import (
     get_uploaded_dir,
     index_chain,
     is_indexed,
+    list_uploaded_files,
     reset_chain,
     SUPPORTED_EXTENSIONS,
 )
@@ -149,9 +150,11 @@ def upload_files(files: List[UploadFile] = File(...)):
 @app.get("/index/status", response_model=IndexStatusResponse)
 def index_status() -> IndexStatusResponse:
     """Return whether documents are indexed and how many files are uploaded."""
+    files = list_uploaded_files()
     return IndexStatusResponse(
         indexed=is_indexed(),
-        file_count=count_uploaded_files(),
+        file_count=len(files),
+        files=files,
     )
 
 
