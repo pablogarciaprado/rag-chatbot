@@ -14,6 +14,11 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.observability import prepare_langchain_otel, setup_observability
+
+# LangChain OTEL env vars must be set before LangChain is imported.
+prepare_langchain_otel()
+
 from rag.rag import (
     count_uploaded_files,
     get_chain,
@@ -24,7 +29,6 @@ from rag.rag import (
     reset_chain,
     SUPPORTED_EXTENSIONS,
 )
-from src.llm.gemini import GeminiFlashLiteProvider
 
 from app.schemas import (
     IndexResponse,
@@ -66,6 +70,9 @@ app = FastAPI(
     description="LLM-powered chat application with retrieval over custom documents for grounded, context-aware responses.",
     lifespan=lifespan,
 )
+
+# Setup Logfire observability.
+setup_observability(app)
 
 # Serve the frontend (HTML + JS) from repo-level `frontend/`.
 _FRONTEND_DIR = _REPO_ROOT / "frontend"

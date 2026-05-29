@@ -9,6 +9,7 @@ description = "FastAPI RAG app with a simple frontend"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "logfire[fastapi,httpx]>=3.0.0",
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.32.0",
   "langchain>=0.3.0",
@@ -23,6 +24,9 @@ dependencies = [
   "python-dotenv",
   "rank-bm25>=0.2.2",
 ]
+
+[tool.logfire]
+project_name = "intelligence-layer-chat"
 
 [tool.setuptools.packages.find]
 where = ["."]

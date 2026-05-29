@@ -181,6 +181,9 @@ Create a `.env` file at the repository root (or export variables in your shell).
 | `RAG_LEXICAL_WEIGHT` | No | `0.5` | Weight of the BM25 branch in hybrid RRF merge (semantic branch is `1.0`) |
 | `RAG_NUMBER_OF_SOURCES` | No | `4` | Number of chunks to retrieve per query |
 | `ENABLE_PRINT_DEBUG` | No | `False` | Log retrieval and message debug output when `true` |
+| `LOGFIRE_ENABLED` | No | `true` | Send traces to Logfire when `true` |
+| `LOGFIRE_SERVICE_NAME` | No | `rag-chatbot` | Service name shown in Logfire |
+| `LOGFIRE_INSTRUMENT_LANGCHAIN` | No | `true` | Export LangChain/LangGraph spans via OpenTelemetry |
 
 Example `.env`:
 
@@ -198,6 +201,24 @@ ENABLE_PRINT_DEBUG=false
 - **`semantic`** — embedding similarity only (cosine via in-memory vector store)
 - **`lexical`** — BM25 keyword search only
 - **`hybrid`** — run both, merge ranks with RRF (recommended)
+
+## Observability (Logfire)
+
+The app sends traces to [Logfire](https://logfire.pydantic.dev/) when enabled:
+
+1. Install SDK: `pip install logfire`
+2. Authenticate and select a project: `logfire auth` then `logfire projects use <project>`
+3. Install `pip install uvicorn 'logfire[fastapi]'` and `pip install 'logfire[httpx]'`. `langchain-google-genai` (`ChatGoogleGenerativeAI`, `GoogleGenerativeAIEmbeddings`) uses HTTPX under the hood for chat and embedding calls to Google’s API.
+4. Run the server: `python3 main.py`
+Install with the FastAPI extra: .
+
+What is instrumented:
+
+- **HTTP routes** — `POST /query`, `/index`, `/upload`, etc. (`/health` and `/static/*` are excluded)
+- **Outbound HTTP** — Gemini API calls via HTTPX
+- **LangChain** — agent, retrieval, and LLM spans when `LOGFIRE_INSTRUMENT_LANGCHAIN=true` (default)
+
+Set `LOGFIRE_ENABLED=false` to disable sending traces without removing the dependency.
 
 ## Run
 
