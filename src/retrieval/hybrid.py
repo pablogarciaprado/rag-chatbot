@@ -229,8 +229,21 @@ def retrieve_documents(query: str, bundle: RetrieverBundle) -> List[Document]:
     """
     Return up to *k* chunks for *query* according to the bundle's retrieval mode.
 
-    Used by both prompt middleware and source attribution so the model and the UI
+    Used by RagWrapper (once per query) and prompt middleware so the model and the UI
     reason over the same evidence.
+
+    Args:
+        query: str - The query to retrieve documents for.
+        bundle: RetrieverBundle - The retriever bundle to use for retrieval.
+            - vectorstore: InMemoryVectorStore
+            - bm25: Any  # BM25Retriever from langchain_community
+            - mode: RetrievalMode
+            - k: int
+            - fetch_k: int  # candidates per branch before hybrid RRF (typically 2 * k)
+            - lexical_weight: float
+        
+    Returns:
+        List[Document] - The retrieved documents.
     """
     if not query.strip():
         return []
@@ -238,7 +251,7 @@ def retrieve_documents(query: str, bundle: RetrieverBundle) -> List[Document]:
     k = bundle.k
     query_preview = query.strip().replace("\n", " ")
     if len(query_preview) > 120:
-        query_preview = query_preview[:120] + "…"
+        query_preview = query_preview[:120] + "..."
 
     fetch_k = bundle.fetch_k
     _debug_print(
@@ -299,7 +312,7 @@ def documents_to_sources(docs: List[Document]) -> List[dict]:
     Collapse retrieved chunks into citation rows for the API.
 
     Users care which file (and page) grounded the answer, not which overlapping chunk
-    won the merge—so we dedupe by (path, page) rather than by chunk key.
+    won the merge, so we deduplicate by (path, page) rather than by chunk key.
     """
     seen: set = set()
     sources: List[dict] = []

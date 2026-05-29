@@ -5,7 +5,7 @@ Implements:
   - load supported files from `context_files/` (populated via the FastAPI upload endpoint)
   - chunking
   - embeddings + in-memory vector store
-  - dynamic prompt injection (retrieval happens in middleware)
+  - dynamic prompt injection (retrieval happens once per query in RagWrapper)
   - a thin wrapper so `app.app` can call `get_chain().invoke(question)`
 """
 
@@ -21,7 +21,11 @@ from langchain_core.vectorstores import InMemoryVectorStore
 # Repo-level absolute imports.
 from src.llm.base import BaseLLMProvider
 from src.llm.gemini import GeminiFlashLiteProvider
-from src.prompt.prompt_manager import build_prompt_middleware
+from src.prompt.prompt_manager import (
+    RETRIEVED_DOCS_STATE_KEY,
+    RagAgentState,
+    build_prompt_middleware,
+)
 from src.retrieval.hybrid import (
     RetrieverBundle,
     build_retriever_bundle,
@@ -169,19 +173,14 @@ def _build_vectorstore(chunks: List[Any]) -> Any:
         embedding=embeddings,
     )
 
-def _retrieve_sources(
-    messages: List[Dict[str, str]],
-    retriever: RetrieverBundle,
-) -> List[Dict[str, Any]]:
-    """Retrieve chunks for the last user message and return deduplicated source metadata."""
+def _last_user_content(messages: List[Dict[str, str]]) -> str:
+    """Return the content of the most recent user message, or an empty string."""
     last_user = next(
         (m for m in reversed(messages) if m.get("role") == "user"), None
     )
     if not last_user:
-        return []
-
-    retrieved = retrieve_documents(last_user["content"], retriever)
-    return documents_to_sources(retrieved)
+        return ""
+    return (last_user.get("content") or "").strip()
 
 class RagWrapper:
     """Thin wrapper so callers can do `get_response(messages) -> (answer, sources)`."""
@@ -196,9 +195,14 @@ class RagWrapper:
         dicts and return ``(answer, sources)`` where *sources* is a deduplicated
         list of ``{"file", "path", "page"}`` dicts derived from the retrieved chunks.
         """
-        sources = _retrieve_sources(messages, self._retriever)
+        query = _last_user_content(messages)
+        retrieved = retrieve_documents(query=query, bundle=self._retriever) if query else []
+        sources = documents_to_sources(retrieved)
 
-        payload: Dict[str, Any] = {"messages": messages}
+        payload: Dict[str, Any] = {
+            "messages": messages,
+            RETRIEVED_DOCS_STATE_KEY: retrieved, # we extended the agent state with the retrieved documents by passing the RagAgentState schema, so it can be used by the prompt middleware.
+        }
         state = self._agent.invoke(payload)
 
         # LangChain agents usually return a state dict with `messages`.
@@ -231,9 +235,18 @@ def count_uploaded_files() -> int:
 
 def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool = False, number_of_sources: int = 4):
     """
-    Build the agent-based RAG app (matches notebook's create_agent + dynamic_prompt).
+    Build the agent-based RAG app (index / build time).
 
-    Returns ``(RagWrapper, stats)`` where *stats* has document and chunk counts.
+    Runs once when the user clicks Index: loads files, chunks them, embeds them,
+    and wires the LangChain agent plus prompt middleware. No retrieval or LLM
+    calls happen here.
+
+    At query time, ``RagWrapper.get_response()`` retrieves chunks, passes them
+    into ``agent.invoke(...)`` as ``retrieved_docs``, and the middleware callback
+    (registered below) reads that state before each model call.
+
+    Returns:
+        ``(RagWrapper, stats)`` where *stats* has document and chunk counts.
     """
     from langchain.agents import create_agent
 
@@ -267,12 +280,19 @@ def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool 
     # Build the LLM.
     llm = llm_provider.build_llm()
 
-    # Build the prompt middleware.
-    ## This will inject the retrieved context into the prompt.
-    middleware = build_prompt_middleware(retriever)
+    # Build-time only: register the prompt callback on the agent. It runs at query
+    # time inside RagWrapper.get_response() → agent.invoke(), not when called here.
+    middleware = build_prompt_middleware()
+    
+    agent = create_agent(
+        model=llm,
+        tools=[],
+        middleware=[middleware],
+        state_schema=RagAgentState, # An optional TypedDict schema that extends AgentState.
+                                    # When provided, this schema is used instead of AgentState as the base schema for merging with middleware state schemas.
+                                    # This allows users to add custom state fields without needing to create custom middleware.
 
-    # Build the agent.
-    agent = create_agent(model=llm, tools=[], middleware=[middleware])
+    )
 
     stats = {"documents": len(documents), "chunks": len(chunks)}
     return RagWrapper(agent, retriever), stats

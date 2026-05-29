@@ -13,64 +13,123 @@ A local FastAPI application that answers questions over your own documents using
 
 ## How it works
 
+### High-level lifecycle
+
 ```mermaid
 flowchart TB
-    classDef phase fill:#f8f9fa,stroke:#5f6368,stroke-width:1px,color:#202124
-    classDef store fill:#e8f0fe,stroke:#1a73e8,stroke-width:2px,color:#174ea6
-    classDef process fill:#fef7e0,stroke:#f9ab00,stroke-width:2px,color:#5f4200
-    classDef retrieve fill:#e6f4ea,stroke:#34a853,stroke-width:2px,color:#137333
-    classDef generate fill:#fce8e6,stroke:#ea4335,stroke-width:2px,color:#c5221f
-    classDef io fill:#fff,stroke:#9aa0a6,stroke-width:2px,stroke-dasharray:4 2,color:#3c4043
-
-    subgraph INDEX["Indexing — explicit POST /index"]
-        direction LR
-        UP([Upload documents]):::io
-        IDX([Index documents]):::io
-        LOAD[Load & parse<br/>pdf · docx · txt · md · pptx]:::process
-        CHUNK[Chunk<br/>1000 chars · 200 overlap]:::process
-        EMB[Embed chunks<br/>gemini-embedding-2-preview]:::process
-        BM25IDX[Build BM25 index]:::process
-        VDB[(InMemoryVectorStore<br/>cosine similarity)]:::store
-        LEX[(BM25 retriever)]:::store
-
-        UP --> IDX --> LOAD --> CHUNK
-        CHUNK --> EMB --> VDB
-        CHUNK --> BM25IDX --> LEX
+    subgraph START["1 · Server startup"]
+        MAIN["main.py<br/>Uvicorn :8000"] --> APP["FastAPI app<br/>app/app.py"]
+        APP --> LIFE["Lifespan hook"]
+        LIFE --> CLEAR["Clear context_files/"]
+        LIFE --> RESET0["reset_chain()<br/>no index in memory"]
     end
 
-    subgraph QUERY["Query — each user message"]
-        direction TB
-        ASK([Question + history]):::io
-        MODE{RAG_RETRIEVAL_MODE}
-
-        SEM[Semantic branch<br/>cosine · top-k]:::retrieve
-        LEXQ[Lexical branch<br/>BM25 · top-k]:::retrieve
-        RRF[RRF merge<br/>hybrid only]:::retrieve
-        TOPK[Top-k chunks]:::retrieve
-        CTX[Inject into system prompt]:::process
-        LLM[gemini-2.5-flash-lite]:::generate
-        OUT([Answer + citations]):::io
-
-        ASK --> MODE
-        MODE -->|semantic| SEM --> TOPK
-        MODE -->|lexical| LEXQ --> TOPK
-        MODE -->|hybrid| SEM
-        MODE -->|hybrid| LEXQ
-        SEM --> RRF
-        LEXQ --> RRF
-        RRF --> TOPK
-        TOPK --> CTX --> LLM --> OUT
+    subgraph UPLOAD["2 · Upload documents"]
+        UI1["Browser UI<br/>frontend/static/app.js"] -->|POST /upload| UP_EP["upload_files()"]
+        UP_EP --> SAVE["Save to RAG_UPLOADED_DIR<br/>(default: context_files/)"]
+        SAVE --> RESET1["reset_chain()<br/>index invalidated"]
     end
 
-    VDB -.-> SEM
-    LEX -.-> LEXQ
+    subgraph INDEX["3 · Index documents"]
+        UI2["Click Index documents"] -->|POST /index| IDX_EP["index_documents()"]
+        IDX_EP --> BUILD["build_rag_chain()<br/>rag/rag.py"]
+        BUILD --> STORE["In-memory RagWrapper<br/>vector store + BM25 + agent"]
+    end
 
-    INDEX ==> QUERY
+    subgraph CHAT["4 · Chat / query"]
+        UI3["User asks question<br/>+ conversation history"] -->|POST /query| Q_EP["query()"]
+        Q_EP --> RESP["RagWrapper.get_response()"]
+        RESP --> OUT["Answer + source citations"]
+        OUT --> UI4["Render reply + source pills"]
+    end
+
+    START --> UPLOAD
+    UPLOAD --> INDEX
+    INDEX --> CHAT
 ```
 
-1. **Indexing** — Documents under `context_files/` are loaded, split into overlapping chunks, embedded with `gemini-embedding-2-preview`, and stored in LangChain’s `InMemoryVectorStore`. A BM25 index is built over the same chunks for keyword search.
-2. **Retrieval** — On each user message, the pipeline retrieves up to `k` chunks (default 4, but configurable through an environment variable). In hybrid mode, semantic and lexical ranked lists are fused with RRF so scores from cosine similarity and BM25 do not need to be normalized against each other.
-3. **Generation** — Retrieved text is appended to the system prompt. A LangChain agent (using Gemini `gemini-2.5-flash-lite`) generates the answer. The same retrieval path feeds both the prompt and the citation list returned to the client.
+### Indexing pipeline (`POST /index`)
+
+```mermaid
+flowchart LR
+    FILES[("context_files/<br/>pdf · docx · txt · md · pptx")] --> LOAD["Load & parse<br/>LangChain loaders"]
+    LOAD --> CHUNK["Chunk<br/>1000 chars · 200 overlap"]
+    CHUNK --> EMB["Embed chunks<br/>gemini-embedding-2-preview"]
+    CHUNK --> BM25["Build BM25 index<br/>same chunks"]
+
+    EMB --> VDB[("InMemoryVectorStore<br/>cosine similarity")]
+    BM25 --> LEX[("BM25Retriever")]
+
+    VDB --> BUNDLE["RetrieverBundle<br/>mode · k · fetch_k · lexical_weight"]
+    LEX --> BUNDLE
+
+    CHUNK --> AGENT["LangChain agent<br/>create_agent()"]
+    LLM["Gemini gemini-2.5-flash-lite"] --> AGENT
+    MW["Prompt middleware<br/>dynamic system prompt"] --> AGENT
+
+    BUNDLE --> WRAP["RagWrapper<br/>agent + retriever"]
+    AGENT --> WRAP
+```
+
+### Query pipeline (each `POST /query`)
+
+```mermaid
+flowchart TB
+    REQ["Request<br/>question + history"] --> MSGS["Build messages list<br/>history + current question"]
+    MSGS --> CHAIN["get_chain() → RagWrapper"]
+
+    CHAIN --> Q["Extract last user message"]
+    Q --> RET["retrieve_documents()<br/>src/retrieval/hybrid.py"]
+
+    RET --> MODE{RAG_RETRIEVAL_MODE}
+
+    MODE -->|semantic| SEM["Vector search<br/>top-k cosine"]
+    MODE -->|lexical| LEX["BM25 keyword search<br/>top-k"]
+    MODE -->|hybrid| SEM2["Semantic branch<br/>fetch 2×k candidates"]
+    MODE -->|hybrid| LEX2["Lexical branch<br/>fetch 2×k candidates"]
+    SEM2 --> RRF["RRF merge<br/>weights: 1.0 semantic · lexical_weight BM25"]
+    LEX2 --> RRF
+    RRF --> TOPK["Top-k chunks"]
+    SEM --> TOPK
+    LEX --> TOPK
+
+    TOPK --> CITE["documents_to_sources()<br/>dedupe by file + page"]
+    TOPK --> STATE["Agent invoke<br/>state: messages + retrieved_docs"]
+
+    STATE --> PROMPT["Prompt middleware<br/>system_prompt.txt + chunk text"]
+    PROMPT --> GEN["Gemini generates answer"]
+    GEN --> RES["QueryResponse<br/>answer + sources"]
+```
+
+### Component map
+
+| Layer | Key files | Role |
+| ------ | ----------- | ------ |
+| Entry | `main.py` | Starts Uvicorn on port 8000 |
+| API | `app/app.py`, `app/schemas.py` | Routes: `/`, `/upload`, `/index`, `/index/status`, `/query`, `/health` |
+| Frontend | `frontend/templates/index.html`, `frontend/static/app.js` | Upload UI, index button, multi-turn chat, citation pills |
+| RAG core | `rag/rag.py` | Load → chunk → embed → build agent → `RagWrapper` |
+| Retrieval | `src/retrieval/hybrid.py` | Semantic / lexical / hybrid (RRF) |
+| Prompt | `src/prompt/prompt_manager.py` | Injects retrieved chunks into system prompt |
+| LLM | `src/llm/gemini.py` | `gemini-2.5-flash-lite` via LangChain |
+
+### Main steps
+
+1. **Start server** — `python3 main.py`; the upload directory is cleared and no index exists yet.
+2. **Upload** — UI or `POST /upload` saves supported files to `context_files/`; any existing index is cleared.
+3. **Index** — UI or `POST /index` loads files, chunks them, embeds them, builds BM25 + vector store, and creates the in-memory `RagWrapper`.
+4. **Ask** — UI or `POST /query` sends the question plus prior turns (`history` does not include the current question).
+5. **Retrieve once** — `RagWrapper` runs hybrid/semantic/lexical retrieval on the latest user message.
+6. **Generate** — Retrieved text is injected into the system prompt; the Gemini agent produces the answer.
+7. **Respond** — API returns `{ answer, sources }`; the UI shows source pills (file + page).
+
+### Design notes
+
+- **Retrieval runs once per query** in `RagWrapper.get_response()` — the same chunks feed both the LLM prompt and the citation list.
+- **Multi-turn chat** — prior turns go in `history`; only the latest user message drives retrieval.
+- **Hybrid mode (default)** — semantic and BM25 each fetch up to `2×k` candidates, then RRF merges down to `k` (`RAG_NUMBER_OF_SOURCES`, default 4).
+- **Everything is in-memory** — indexes are rebuilt on each `POST /index`; uploads invalidate the index until re-indexing.
+- **Strict grounding** — `system_prompt.txt` instructs the model to answer only when confident in the retrieved context.
 
 > Semantic search uses **cosine similarity** over embedding vectors (exact brute-force search in memory). This is appropriate for small corpora; for very large indexes would be better moving to an approximate nearest-neighbor store (e.g. HNSW or IVF in FAISS, Qdrant, or pgvector).
 
