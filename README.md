@@ -183,6 +183,7 @@ Create a `.env` file at the repository root (or export variables in your shell).
 | `ENABLE_PRINT_DEBUG` | No | `False` | Log retrieval and message debug output when `true` |
 | `LOGFIRE_ENABLED` | No | `true` | Send traces to Logfire when `true` |
 | `LOGFIRE_SERVICE_NAME` | No | `rag-chatbot` | Service name shown in Logfire |
+| `LOGFIRE_USER_ID` | No | `dev-user` | User id attached to every trace (placeholder until auth exists) |
 | `LOGFIRE_INSTRUMENT_LANGCHAIN` | No | `true` | Export LangChain/LangGraph spans via OpenTelemetry |
 
 Example `.env`:
@@ -217,8 +218,11 @@ What is instrumented:
 - **HTTP routes** — `POST /query`, `/index`, `/upload`, etc. (`/health` and `/static/*` are excluded)
 - **Outbound HTTP** — Gemini API calls via HTTPX
 - **LangChain** — agent, retrieval, and LLM spans when `LOGFIRE_INSTRUMENT_LANGCHAIN=true` (default)
+- **User context** — `user_id` on every span via baggage (`dev-user` by default; override with `LOGFIRE_USER_ID`)
 
 Set `LOGFIRE_ENABLED=false` to disable sending traces without removing the dependency.
+
+Filter by user in Logfire Live view: `attributes->>'user_id' = 'dev-user'`
 
 ## Run
 

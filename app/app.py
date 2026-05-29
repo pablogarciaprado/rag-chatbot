@@ -71,7 +71,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Setup Logfire observability.
+# Setup Logfire observability (includes per-request user_id baggage).
 setup_observability(app)
 
 # Serve the frontend (HTML + JS) from repo-level `frontend/`.
