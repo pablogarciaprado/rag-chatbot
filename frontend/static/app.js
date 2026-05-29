@@ -4,10 +4,14 @@ const $ = (id) => document.getElementById(id);
 // Does NOT include the in-flight message — it is appended only after success.
 let conversationHistory = [];
 let isThinking = false;
+let isIndexed = false;
+let isIndexing = false;
+let uploadedFileCount = 0;
+let uploadedFileNames = [];
 
 // ── Chat rendering ────────────────────────────────────────────────────────────
 
-function appendMessage(role, content) {
+function appendMessage(role, content, sources = []) {
   const chatWindow = $("chatWindow");
 
   // Remove empty-state placeholder on first real message.
@@ -23,7 +27,55 @@ function appendMessage(role, content) {
 
   const bubble = document.createElement("div");
   bubble.className = "msg-bubble";
-  bubble.textContent = content;
+
+  // If the message is from the assistant, add the citation sources to the bubble.
+  if (role === "assistant") {
+    const text = document.createElement("div");
+    text.className = "msg-bubble-text";
+    text.textContent = content;
+    bubble.appendChild(text);
+
+    // If there are sources, add the citation sources to the bubble.
+    if (sources && sources.length > 0) {
+      const footer = document.createElement("div");
+      footer.className = "msg-sources";
+
+      const footerLabel = document.createElement("span");
+      footerLabel.className = "msg-sources-label";
+      footerLabel.textContent = "Sources";
+      footer.appendChild(footerLabel);
+
+      sources.forEach((src) => {
+        const pill = document.createElement("span");
+        pill.className = "msg-source-pill";
+        pill.title = src.path || src.file || "";
+
+        const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        icon.setAttribute("width", "10");
+        icon.setAttribute("height", "10");
+        icon.setAttribute("viewBox", "0 0 24 24");
+        icon.setAttribute("fill", "none");
+        icon.setAttribute("stroke", "currentColor");
+        icon.setAttribute("stroke-width", "2");
+        icon.setAttribute("stroke-linecap", "round");
+        icon.setAttribute("stroke-linejoin", "round");
+        icon.innerHTML = `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>`;
+        pill.appendChild(icon);
+
+        const pillText = document.createElement("span");
+        let label = src.file || src.path || "Unknown";
+        if (src.page != null) label += ` · p. ${src.page}`;
+        pillText.textContent = label;
+        pill.appendChild(pillText);
+
+        footer.appendChild(pill);
+      });
+
+      bubble.appendChild(footer);
+    }
+  } else {
+    bubble.textContent = content;
+  }
 
   msg.appendChild(label);
   msg.appendChild(bubble);
@@ -86,6 +138,11 @@ async function sendMessage() {
     return;
   }
 
+  if (!isIndexed) {
+    setStatus(statusEl, "Index your documents before asking questions.", "error");
+    return;
+  }
+
   // Optimistically render the user bubble and clear the input.
   appendMessage("user", question);
   textarea.value = "";
@@ -123,8 +180,10 @@ async function sendMessage() {
 
     const data = await res.json();
     const answer = data.answer ?? "";
+    const sources = data.sources ?? [];
 
-    appendMessage("assistant", answer);
+    // Append the assistant's message (and its citation sources) to the chat window.
+    appendMessage("assistant", answer, sources);
 
     // Commit both turns to history after a successful round-trip.
     conversationHistory.push({ role: "user", content: question });
@@ -185,12 +244,18 @@ async function handleFiles(fileList) {
 
   try {
     const data    = await uploadFiles(files);
-    const saved   = data.saved?.length   ?? 0;
-    const skipped = data.skipped?.length ?? 0;
-    const msg = `${saved} file${saved !== 1 ? "s" : ""} uploaded successfully.${
-      skipped ? ` ${skipped} unsupported file${skipped !== 1 ? "s" : ""} skipped.` : ""
+    const saved   = data.saved ?? [];
+    const skipped = data.skipped ?? [];
+    const msg = `${saved.length} file${saved.length !== 1 ? "s" : ""} uploaded. Click Index documents to make them searchable.${
+      skipped.length ? ` ${skipped.length} unsupported file${skipped.length !== 1 ? "s" : ""} skipped.` : ""
     }`;
     setUploadStatus(statusEl, msg, "success");
+    isIndexed = false;
+    if (saved.length > 0) {
+      addUploadedFiles(saved);
+      updateIndexButton();
+    }
+    await refreshIndexStatus();
   } catch (e) {
     setUploadStatus(statusEl, e?.message ?? "Upload error.", "error");
   } finally {
@@ -198,11 +263,89 @@ async function handleFiles(fileList) {
   }
 }
 
+// ── Index documents ───────────────────────────────────────────────────────────
+
+async function indexDocuments() {
+  if (isIndexing) return;
+
+  const statusEl = $("uploadStatus");
+  const indexBtn = $("indexBtn");
+
+  isIndexing = true;
+  indexBtn.disabled = true;
+  setUploadStatus(statusEl, "Indexing documents\u2026", "");
+
+  try {
+    const res = await fetch("/index", { method: "POST" });
+
+    if (!res.ok) {
+      let detail = `Error ${res.status}`;
+      try {
+        const body = await res.json();
+        detail = body.detail ?? detail;
+      } catch {
+        detail = (await res.text()) || detail;
+      }
+      setUploadStatus(statusEl, detail, "error");
+      return;
+    }
+
+    const data = await res.json();
+    const docs = data.documents ?? 0;
+    const chunks = data.chunks ?? 0;
+    isIndexed = true;
+    setUploadStatus(
+      statusEl,
+      `Indexed ${docs} parsed unit${docs !== 1 ? "s" : ""} (${chunks} chunk${chunks !== 1 ? "s" : ""}). You can ask questions now.`,
+      "success",
+    );
+  } catch (e) {
+    setUploadStatus(statusEl, e?.message ?? "Indexing failed.", "error");
+  } finally {
+    isIndexing = false;
+    updateIndexButton();
+  }
+}
+
+async function refreshIndexStatus() {
+  try {
+    const res = await fetch("/index/status");
+    if (!res.ok) return;
+
+    const data = await res.json();
+    isIndexed = Boolean(data.indexed);
+    if (Array.isArray(data.files)) {
+      uploadedFileNames = data.files;
+      uploadedFileCount = uploadedFileNames.length;
+      renderUploadedFileList();
+    } else {
+      const count = Number(data.file_count) || 0;
+      if (count > 0) {
+        uploadedFileCount = count;
+      }
+    }
+    updateIndexButton();
+  } catch {
+    // Keep current uploadedFileCount if status check fails.
+  }
+}
+
+function updateIndexButton() {
+  const indexBtn = $("indexBtn");
+  if (!indexBtn) return;
+
+  const canIndex = !isIndexing && uploadedFileCount > 0;
+  indexBtn.disabled = !canIndex;
+  indexBtn.textContent = isIndexed ? "Re-index documents" : "Index documents";
+}
+
 // ── Wire-up ───────────────────────────────────────────────────────────────────
 
 function wireUpload() {
   const zone      = $("uploadZone");
   const fileInput = $("fileInput");
+
+  $("indexBtn").addEventListener("click", indexDocuments);
 
   fileInput.addEventListener("change", () => {
     if (fileInput.files?.length) handleFiles(fileInput.files);
@@ -253,5 +396,54 @@ function setUploadStatus(el, message, type) {
   el.className = type; // "success" | "error" | ""
 }
 
+function addUploadedFiles(names) {
+  for (const name of names) {
+    if (!uploadedFileNames.includes(name)) {
+      uploadedFileNames.push(name);
+    }
+  }
+  uploadedFileNames.sort((a, b) => a.localeCompare(b));
+  uploadedFileCount = uploadedFileNames.length;
+  renderUploadedFileList();
+}
+
+function renderUploadedFileList() {
+  const listEl = $("uploadedFileList");
+  if (!listEl) return;
+
+  listEl.innerHTML = "";
+
+  if (uploadedFileNames.length === 0) {
+    listEl.hidden = true;
+    return;
+  }
+
+  listEl.hidden = false;
+
+  for (const name of uploadedFileNames) {
+    const item = document.createElement("li");
+    item.className = "uploaded-file-item";
+
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("width", "14");
+    icon.setAttribute("height", "14");
+    icon.setAttribute("viewBox", "0 0 24 24");
+    icon.setAttribute("fill", "none");
+    icon.setAttribute("stroke", "currentColor");
+    icon.setAttribute("stroke-width", "2");
+    icon.setAttribute("stroke-linecap", "round");
+    icon.setAttribute("stroke-linejoin", "round");
+    icon.innerHTML = `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>`;
+
+    const label = document.createElement("span");
+    label.textContent = name;
+
+    item.appendChild(icon);
+    item.appendChild(label);
+    listEl.appendChild(item);
+  }
+}
+
 wireUpload();
 wireChat();
+refreshIndexStatus();

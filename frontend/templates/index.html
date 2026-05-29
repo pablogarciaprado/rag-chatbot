@@ -28,8 +28,10 @@
         </p>
       </header>
 
+      <div class="main-layout">
+
       <!-- Upload card -->
-      <div class="card">
+      <div class="card card-upload">
         <div class="card-title">
           <span class="card-title-icon">
             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
@@ -38,7 +40,7 @@
           </span>
           Upload Documents
         </div>
-        <p class="card-description">Index files so the assistant can reference them when answering questions.</p>
+        <p class="card-description">Upload documents, then index them before asking questions.</p>
 
         <input id="fileInput" type="file" multiple style="display:none" />
         <label for="fileInput" class="upload-zone" id="uploadZone">
@@ -52,10 +54,16 @@
         </label>
 
         <div id="uploadStatus"></div>
+        <div class="upload-actions">
+          <button id="indexBtn" class="btn btn-primary" type="button" disabled>
+            Index documents
+          </button>
+        </div>
+        <ul id="uploadedFileList" class="uploaded-file-list" hidden></ul>
       </div>
 
       <!-- Chat card -->
-      <div class="card">
+      <div class="card card-chat">
         <div class="card-header-row">
           <div class="card-title">
             <span class="card-title-icon">
@@ -67,7 +75,7 @@
           </div>
           <button id="clearBtn" class="btn btn-ghost" type="button">New chat</button>
         </div>
-        <p class="card-description">Ask questions about your uploaded documents. The assistant remembers the full conversation.</p>
+        <p class="card-description">Ask questions about your indexed documents. The assistant remembers the full conversation.</p>
 
         <!-- Message history -->
         <div id="chatWindow" class="chat-window">
@@ -97,10 +105,12 @@
         </div>
       </div>
 
+      </div>
+
       <footer class="footer">Built by Pablo with love</footer>
 
     </div>
 
-    <script src="/static/app.js" defer></script>
+    <script src="/static/app.js?v=2" defer></script>
   </body>
 </html>

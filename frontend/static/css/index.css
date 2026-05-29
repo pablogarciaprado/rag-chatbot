@@ -32,11 +32,45 @@ body {
 }
 
 .container {
-  max-width: 700px;
+  max-width: 1200px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.main-layout {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+  min-height: calc(100vh - 280px);
+}
+
+.card-upload {
+  flex: 1;
+  min-width: 0;
+  align-self: flex-start;
+}
+
+.card-chat {
+  flex: 2;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.card-chat .card-description {
+  flex-shrink: 0;
+}
+
+.card-chat .chat-window {
+  flex: 1;
+  min-height: 420px;
+  height: auto;
+}
+
+.card-chat .chat-input-area {
+  flex-shrink: 0;
 }
 
 /* -- Header -- */
@@ -177,6 +211,41 @@ h1 {
 #uploadStatus.success { color: var(--success); }
 #uploadStatus.error   { color: var(--danger); }
 
+.uploaded-file-list {
+  list-style: none;
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.uploaded-file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  background: #fafafc;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.uploaded-file-item svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.upload-actions {
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* -- Button -- */
 .btn {
   display: inline-flex;
@@ -301,6 +370,51 @@ h1 {
   word-break: break-word;
 }
 
+.msg-bubble-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* -- Source citation footer -- */
+.msg-sources {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  white-space: normal;
+}
+
+.msg-sources-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+
+.msg-source-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 7px;
+  cursor: default;
+  line-height: 1.4;
+}
+
+.msg-source-pill svg {
+  flex-shrink: 0;
+  opacity: .7;
+}
+
 .msg.user .msg-bubble {
   background: var(--accent);
   color: #fff;
@@ -391,4 +505,20 @@ h1 {
   font-size: 12.5px;
   color: var(--text-muted);
   margin-top: 8px;
+}
+
+@media (max-width: 860px) {
+  .main-layout {
+    flex-direction: column;
+    min-height: auto;
+  }
+
+  .card-upload {
+    align-self: stretch;
+  }
+
+  .card-chat .chat-window {
+    height: 420px;
+    flex: none;
+  }
 }

@@ -5,7 +5,7 @@ Implements:
   - load supported files from `context_files/` (populated via the FastAPI upload endpoint)
   - chunking
   - embeddings + in-memory vector store
-  - dynamic prompt injection (retrieval happens in middleware)
+  - dynamic prompt injection (retrieval happens once per query in RagWrapper)
   - a thin wrapper so `app.app` can call `get_chain().invoke(question)`
 """
 
@@ -14,13 +14,24 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from dotenv import load_dotenv
+from langchain_core.vectorstores import InMemoryVectorStore
 
 # Repo-level absolute imports.
 from src.llm.base import BaseLLMProvider
 from src.llm.gemini import GeminiFlashLiteProvider
-from src.prompt.prompt_manager import build_prompt_middleware
+from src.prompt.prompt_manager import (
+    RETRIEVED_DOCS_STATE_KEY,
+    RagAgentState,
+    build_prompt_middleware,
+)
+from src.retrieval.hybrid import (
+    RetrieverBundle,
+    build_retriever_bundle,
+    documents_to_sources,
+    retrieve_documents,
+)
 
 # Resolve repository root from `.../rag/rag.py`.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -28,12 +39,16 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 # Load repo-root `.env` when present.
 load_dotenv(dotenv_path=str(_REPO_ROOT / ".env"), override=False)
 
-UPLOADED_DIR = os.getenv(
-    "RAG_UPLOADED_DIR",
-    str(_REPO_ROOT / "context_files"),
-)
-
 SUPPORTED_EXTENSIONS = {".docx", ".pdf", ".txt", ".md", ".pptx"}
+
+
+def get_uploaded_dir() -> Path:
+    """Return the upload directory, resolving relative paths against the repo root."""
+    raw = os.getenv("RAG_UPLOADED_DIR", "context_files")
+    path = Path(raw)
+    if not path.is_absolute():
+        path = _REPO_ROOT / path
+    return path.resolve()
 
 
 def _ensure_nltk_resource_from_error(error: LookupError) -> bool:
@@ -72,7 +87,7 @@ def _load_documents() -> List[Any]:
         UnstructuredPowerPointLoader, # For .pptx files
     )
 
-    base_dir = Path(UPLOADED_DIR)
+    base_dir = get_uploaded_dir()
     if not base_dir.exists():
         return []
 
@@ -90,7 +105,11 @@ def _load_documents() -> List[Any]:
             documents.extend(loader.load())
         elif suffix == ".pdf":
             loader = PyPDFLoader(str(path))
-            documents.extend(loader.load())
+            # Add required fields to the metadata before saving to the vector store
+            docs = loader.load()
+            for doc in docs:
+                doc.metadata = {**(doc.metadata or {}), "creator": "Pablo"}  # or f(path), JSON lookup, etc.
+            documents.extend(docs)
         elif suffix == ".pptx":
             loader = UnstructuredPowerPointLoader(str(path))
             try:
@@ -135,27 +154,55 @@ def _build_embeddings() -> Any:
     )
 
 def _build_vectorstore(chunks: List[Any]) -> Any:
-    from langchain_core.vectorstores import InMemoryVectorStore
+    """
+    Build the vector store from the chunks.
 
-    chunk_texts = [doc.page_content for doc in chunks]
+    We are using an in-memory vector for simplicity, 
+    but this is not scalable for large datasets,
+    and it is not recommended for production use.
+    
+    Args:
+        chunks: List[Any] - The chunks to build the vector store from.
+
+    Returns:
+        InMemoryVectorStore - The vector store.
+    """
     embeddings = _build_embeddings()
-    return InMemoryVectorStore.from_texts(
-        chunk_texts,
+    return InMemoryVectorStore.from_documents(
+        chunks,
         embedding=embeddings,
     )
 
+def _last_user_content(messages: List[Dict[str, str]]) -> str:
+    """Return the content of the most recent user message, or an empty string."""
+    last_user = next(
+        (m for m in reversed(messages) if m.get("role") == "user"), None
+    )
+    if not last_user:
+        return ""
+    return (last_user.get("content") or "").strip()
+
 class RagWrapper:
-    """Thin wrapper so callers can do `invoke(messages) -> str`."""
+    """Thin wrapper so callers can do `get_response(messages) -> (answer, sources)`."""
 
-    def __init__(self, agent_: Any):
+    def __init__(self, agent_: Any, retriever_: RetrieverBundle):
         self._agent = agent_
+        self._retriever = retriever_
 
-    def get_response(self, messages: List[Dict[str, str]]) -> str:
+    def get_response(self, messages: List[Dict[str, str]]) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Accept the full conversation as a list of ``{"role": ..., "content": ...}``
-        dicts and return the assistant's reply as a plain string.
+        dicts and return ``(answer, sources)`` where *sources* is a deduplicated
+        list of ``{"file", "path", "page"}`` dicts derived from the retrieved chunks.
         """
-        payload: Dict[str, Any] = {"messages": messages}
+        query = _last_user_content(messages)
+        retrieved = retrieve_documents(query=query, bundle=self._retriever) if query else []
+        sources = documents_to_sources(retrieved)
+
+        payload: Dict[str, Any] = {
+            "messages": messages,
+            RETRIEVED_DOCS_STATE_KEY: retrieved, # we extended the agent state with the retrieved documents by passing the RagAgentState schema, so it can be used by the prompt middleware.
+        }
         state = self._agent.invoke(payload)
 
         # LangChain agents usually return a state dict with `messages`.
@@ -163,17 +210,43 @@ class RagWrapper:
             last = state["messages"][-1]
             content = getattr(last, "content", None)
             if content:
-                return content
+                return content, sources
 
-        # Fallback: best-effort string conversion
-        return str(state)
+        return str(state), sources
 
 
-def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool = False):
+def list_uploaded_files() -> list[str]:
+    """Return supported file names under UPLOADED_DIR (sorted)."""
+    base_dir = get_uploaded_dir()
+    if not base_dir.exists():
+        return []
+
+    return sorted(
+        path.name
+        for path in base_dir.rglob("*")
+        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+    )
+
+
+def count_uploaded_files() -> int:
+    """Count supported files under UPLOADED_DIR."""
+    return len(list_uploaded_files())
+
+
+def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool = False, number_of_sources: int = 4):
     """
-    Build the agent-based RAG app (matches notebook's create_agent + dynamic_prompt).
+    Build the agent-based RAG app (index / build time).
 
-    Returns an object with `.invoke(messages: list[dict]) -> str`.
+    Runs once when the user clicks Index: loads files, chunks them, embeds them,
+    and wires the LangChain agent plus prompt middleware. No retrieval or LLM
+    calls happen here.
+
+    At query time, ``RagWrapper.get_response()`` retrieves chunks, passes them
+    into ``agent.invoke(...)`` as ``retrieved_docs``, and the middleware callback
+    (registered below) reads that state before each model call.
+
+    Returns:
+        ``(RagWrapper, stats)`` where *stats* has document and chunk counts.
     """
     from langchain.agents import create_agent
 
@@ -188,7 +261,7 @@ def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool 
         supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
         raise RuntimeError(
             "No supported files found under "
-            f"UPLOADED_DIR={UPLOADED_DIR!r}. Upload files via the UI. "
+            f"upload dir={get_uploaded_dir()!s}. Upload files via the UI. "
             f"Supported extensions: {supported}."
         )
 
@@ -196,39 +269,66 @@ def build_rag_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool 
     chunks = _split_documents(documents)
 
     if debug:
-        print("[DEBUG]: chunks", len(chunks))
-        print("[DEBUG]: chunks", chunks)
+        print("[DEBUG][rag.py]: chunks", len(chunks))
 
     # Build the vector store.
     ## We are using an in-memory vector store to store the chunks,
     ## this is not scalable for large datasets, but it is convenient for a simple application.
     vectorstore = _build_vectorstore(chunks)
+    retriever = build_retriever_bundle(vectorstore, chunks, k=number_of_sources)
 
     # Build the LLM.
     llm = llm_provider.build_llm()
 
-    # Build the prompt middleware.
-    ## This will inject the retrieved context into the prompt.
-    middleware = build_prompt_middleware(vectorstore)
+    # Build-time only: register the prompt callback on the agent. It runs at query
+    # time inside RagWrapper.get_response() → agent.invoke(), not when called here.
+    middleware = build_prompt_middleware()
+    
+    agent = create_agent(
+        model=llm,
+        tools=[],
+        middleware=[middleware],
+        state_schema=RagAgentState, # An optional TypedDict schema that extends AgentState.
+                                    # When provided, this schema is used instead of AgentState as the base schema for merging with middleware state schemas.
+                                    # This allows users to add custom state fields without needing to create custom middleware.
 
-    # Build the agent.
-    agent = create_agent(model=llm, tools=[], middleware=[middleware])
+    )
 
-    # Return the RAG wrapper.
-    return RagWrapper(agent)
-
-
-# Lazy singleton (build on first request)
-_CHAIN: Optional[Any] = None
+    stats = {"documents": len(documents), "chunks": len(chunks)}
+    return RagWrapper(agent, retriever), stats
 
 
-def get_chain(llm_provider: Optional[BaseLLMProvider] = None, debug: bool = False):
+# In-memory index (built explicitly via index_chain()).
+_CHAIN: Optional[RagWrapper] = None
+
+
+def is_indexed() -> bool:
+    return _CHAIN is not None
+
+
+def index_chain(
+    llm_provider: Optional[BaseLLMProvider] = None,
+    debug: bool = False,
+    number_of_sources: int = 4,
+) -> Dict[str, int]:
+    """Load uploaded files, chunk, embed, and build the in-memory index."""
     global _CHAIN
+    chain, stats = build_rag_chain(llm_provider, debug, number_of_sources)
+    _CHAIN = chain
+    return stats
+
+
+def get_chain() -> RagWrapper:
     if _CHAIN is None:
-        _CHAIN = build_rag_chain(llm_provider, debug)
+        supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+        raise RuntimeError(
+            "Documents have not been indexed yet. Upload files and click Index "
+            f"(or POST /index). Supported extensions: {supported}."
+        )
     return _CHAIN
 
+
 def reset_chain() -> None:
-    """Force the in-memory RAG index to be rebuilt on next request."""
+    """Clear the in-memory index (e.g. after new uploads)."""
     global _CHAIN
     _CHAIN = None
