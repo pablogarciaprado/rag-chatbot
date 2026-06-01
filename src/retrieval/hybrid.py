@@ -17,6 +17,8 @@ from typing import Any, List, Literal, Optional
 from langchain_core.documents import Document
 from langchain_core.vectorstores import InMemoryVectorStore
 
+from src.retrieval.rerank import get_rerank_config, rerank_documents, resolve_rerank_pool_k
+
 
 def _debug_enabled() -> bool:
     return os.getenv("ENABLE_PRINT_DEBUG", "False").lower() == "true"
@@ -59,9 +61,11 @@ class RetrieverBundle:
     vectorstore: InMemoryVectorStore
     bm25: Any  # BM25Retriever from langchain_community
     mode: RetrievalMode
-    k: int
-    fetch_k: int  # candidates per branch before hybrid RRF (typically 2 * k)
-    lexical_weight: float
+    k: int # Number of chunks to keep after retrieval is performed. Pulled by default from the environment variable `RAG_FINAL_NUMBER_OF_SOURCES_AFTER_RETRIEVAL`.
+    per_branch_k: int  # candidates per branch before hybrid RRF (typically 2 * k)
+    lexical_weight: float # Weight of the lexical (BM25) branch in hybrid RRF merge. Pulled by default from the environment variable `RAG_LEXICAL_WEIGHT`.
+    rerank_enabled: bool # Whether re-ranking is enabled. Pulled by default from the environment variable `RAG_RERANK_ENABLED`.
+    rerank_pool_k: int  # first-stage pool size when re-ranking is on. Pulled by default from the environment variable `RAG_RERANK_CANDIDATES`.
 
 
 def _parse_retrieval_mode() -> RetrievalMode:
@@ -101,7 +105,7 @@ def get_retrieval_config(
         tuple[RetrievalMode, int, float] - The resolved retrieval mode, number of chunks, and lexical weight.
     """
     resolved_mode = mode if mode is not None else _parse_retrieval_mode()
-    resolved_k = k
+    resolved_k = k # Pulled by default from the environment variable `RAG_NUMBER_OF_SOURCES_AFTER_RRF`.
     if lexical_weight is not None:
         resolved_weight = lexical_weight
     else:
@@ -115,10 +119,18 @@ def get_retrieval_config(
     return resolved_mode, resolved_k, resolved_weight
 
 
-def _branch_fetch_k(k: int, *, num_chunks: int) -> int:
+def _fetch_per_branch_k(k: int, *, num_chunks: int) -> int:
     """Candidates to pull from each branch in hybrid mode (capped by corpus size)."""
-    return min(2 * k, num_chunks) if num_chunks else k
-
+    # Pulled by default from the environment variable `RAG_NUMBER_OF_CHUNKS_PER_BRANCH`.
+    raw = os.getenv("RAG_NUMBER_OF_CHUNKS_PER_BRANCH", "16").strip().lower()
+    # .env files often carry trailing comments; strip them so "hybrid # default" works.
+    raw = raw.split("#", 1)[0].strip()
+    try:
+        per_branch_k = int(raw)
+    except ValueError:
+        per_branch_k = min(2 * k, num_chunks) if num_chunks else k
+    _debug_print(f"_fetch_per_branch_k(k={k}, num_chunks={num_chunks}) -> {per_branch_k}")
+    return per_branch_k 
 
 def build_bm25_retriever(chunks: List[Document], k: int) -> Any:
     """
@@ -151,24 +163,51 @@ def build_retriever_bundle(
 
     A Lexical Weight is set in order to bias the retrieval towards the lexical (BM25) branch,
     but giving more weight to the semantic branch.
+
+    Args:
+        vectorstore: InMemoryVectorStore - The vector store to use for semantic retrieval.
+        chunks: List[Document] - The chunks to index.
+        k: int - The number of chunks to retrieve. Pulled by default from the environment variable `RAG_NUMBER_OF_SOURCES_AFTER_RRF`.
+        mode: Optional[RetrievalMode] - The retrieval mode to use.
+        lexical_weight: Optional[float] - The weight of the lexical (BM25) branch in hybrid RRF merge.
+
+    Returns:
+        RetrieverBundle - The retriever bundle.
     """
     resolved_mode, resolved_k, resolved_weight = get_retrieval_config(
         k=k, mode=mode, lexical_weight=lexical_weight
     )
     num_chunks = len(chunks)
-    fetch_k = _branch_fetch_k(resolved_k, num_chunks=num_chunks)
+    rerank_enabled, _, _, _, rerank_candidates = get_rerank_config()
+    rerank_pool_k = (
+        resolve_rerank_pool_k(
+            resolved_k,
+            num_chunks=num_chunks,
+            explicit_pool=rerank_candidates,
+        )
+        if rerank_enabled
+        else resolved_k
+    )
+    per_branch_k = (
+        rerank_pool_k
+        if rerank_enabled
+        else _fetch_per_branch_k(resolved_k, num_chunks=num_chunks)
+    )
     bm25 = build_bm25_retriever(chunks, resolved_k)
     _debug_print(
-        f"index ready mode={resolved_mode} k={resolved_k} fetch_k={fetch_k} "
-        f"lexical_weight={resolved_weight} chunks={num_chunks}"
+        f"index ready mode={resolved_mode} k={resolved_k} per_branch_k={per_branch_k} "
+        f"lexical_weight={resolved_weight} rerank={rerank_enabled} "
+        f"rerank_pool_k={rerank_pool_k} chunks={num_chunks}"
     )
     return RetrieverBundle(
         vectorstore=vectorstore,
         bm25=bm25,
         mode=resolved_mode,
         k=resolved_k,
-        fetch_k=fetch_k,
+        per_branch_k=per_branch_k,
         lexical_weight=resolved_weight,
+        rerank_enabled=rerank_enabled,
+        rerank_pool_k=rerank_pool_k,
     )
 
 
@@ -201,9 +240,17 @@ def _merge_rrf(
     """
     Fuse multiple ranked lists with Reciprocal Rank Fusion.
 
-    RRF only needs ranks, not raw scores—so we never have to calibrate vector cosine
+    RRF only needs ranks, not raw scores, so we never have to calibrate vector cosine
     distance against BM25 term frequency. Chunks that rank well in both lists accumulate
     mass; chunks strong in only one list still have a path in via the other branch.
+
+    Args:
+        ranked_lists: List[List[Document]] - The ranked lists to merge.
+        weights: List[float] - The weights of the ranked lists.
+        k: int - The number of chunks to merge.
+
+    Returns:
+        List[Document] - The merged chunks.
     """
     scores: dict[str, float] = {}
     docs_by_key: dict[str, Document] = {}
@@ -225,6 +272,19 @@ def _merge_rrf(
     return merged
 
 
+def _finalize_retrieval(
+    query: str,
+    docs: List[Document],
+    bundle: RetrieverBundle,
+) -> List[Document]:
+    """Optionally re-rank a first-stage candidate pool down to bundle.k."""
+    pool_k = bundle.rerank_pool_k if bundle.rerank_enabled else bundle.k
+    pooled = docs[:pool_k]
+    if not bundle.rerank_enabled or len(pooled) <= 1:
+        return pooled[: bundle.k]
+    return rerank_documents(query, pooled, top_n=bundle.k)
+
+
 def retrieve_documents(query: str, bundle: RetrieverBundle) -> List[Document]:
     """
     Return up to *k* chunks for *query* according to the bundle's retrieval mode.
@@ -239,7 +299,7 @@ def retrieve_documents(query: str, bundle: RetrieverBundle) -> List[Document]:
             - bm25: Any  # BM25Retriever from langchain_community
             - mode: RetrievalMode
             - k: int
-            - fetch_k: int  # candidates per branch before hybrid RRF (typically 2 * k)
+            - per_branch_k: int  # candidates per branch before hybrid RRF (typically 2 * k)
             - lexical_weight: float
         
     Returns:
@@ -253,54 +313,63 @@ def retrieve_documents(query: str, bundle: RetrieverBundle) -> List[Document]:
     if len(query_preview) > 120:
         query_preview = query_preview[:120] + "..."
 
-    fetch_k = bundle.fetch_k
+    per_branch_k = bundle.per_branch_k
     _debug_print(
-        f"query={query_preview!r} mode={bundle.mode} k={k} fetch_k={fetch_k} "
-        f"lexical_weight={bundle.lexical_weight}"
+        f"query={query_preview!r} mode={bundle.mode} k={k} per_branch_k={per_branch_k} "
+        f"lexical_weight={bundle.lexical_weight} rerank={bundle.rerank_enabled} "
+        f"rerank_pool_k={bundle.rerank_pool_k}"
     )
 
     try:
         if bundle.mode == "semantic":
-            docs = bundle.vectorstore.similarity_search(query, k=k)
+            search_k = per_branch_k if bundle.rerank_enabled else k
+            docs = bundle.vectorstore.similarity_search(query, k=search_k)
             if _debug_enabled():
                 _debug_print(f"semantic-only -> {len(docs)} hits")
                 for i, doc in enumerate(docs):
                     _debug_print(f"  sem #{i + 1} {_doc_label(doc)}")
-            return docs
+            return _finalize_retrieval(query, docs, bundle)
 
         if bundle.mode == "lexical":
-            docs = bundle.bm25.invoke(query)
+            prev_bm25_k = bundle.bm25.k
+            search_k = per_branch_k if bundle.rerank_enabled else k
+            try:
+                bundle.bm25.k = search_k
+                docs = bundle.bm25.invoke(query)
+            finally:
+                bundle.bm25.k = prev_bm25_k
             if _debug_enabled():
                 _debug_print(f"lexical-only -> {len(docs)} hits")
                 for i, doc in enumerate(docs):
                     _debug_print(f"  lex #{i + 1} {_doc_label(doc)}")
-            return docs
+            return _finalize_retrieval(query, docs, bundle)
 
-        semantic = bundle.vectorstore.similarity_search(query, k=fetch_k)
+        semantic = bundle.vectorstore.similarity_search(query, k=per_branch_k)
         prev_bm25_k = bundle.bm25.k
         # BM25’s k is fixed on the retriever object,
-        # so we need to set it to the fetch_k for the lexical branch.
-        # If we run on lexical only mode, fetch_k is set to the number of sources.
+        # so we need to set it to the per_branch_k for the lexical branch.
+        # If we run on lexical only mode, per_branch_k is set to the number of sources.
         try:
-            bundle.bm25.k = fetch_k
+            bundle.bm25.k = per_branch_k
             lexical = bundle.bm25.invoke(query)
         finally:
             bundle.bm25.k = prev_bm25_k
 
         if _debug_enabled():
-            _debug_print(f"semantic branch (fetch_k={fetch_k}) -> {len(semantic)} hits")
+            _debug_print(f"semantic branch (per_branch_k={per_branch_k}) -> {len(semantic)} hits")
             for i, doc in enumerate(semantic):
                 _debug_print(f"  sem #{i + 1} {_doc_label(doc)}")
-            _debug_print(f"lexical branch (fetch_k={fetch_k}) -> {len(lexical)} hits")
+            _debug_print(f"lexical branch (per_branch_k={per_branch_k}) -> {len(lexical)} hits")
             for i, doc in enumerate(lexical):
                 _debug_print(f"  lex #{i + 1} {_doc_label(doc)}")
 
-        # Semantic branch at weight 1.0; lexical scaled so operators can bias toward keywords.
-        return _merge_rrf(
+        merge_k = bundle.rerank_pool_k if bundle.rerank_enabled else k
+        merged = _merge_rrf(
             [semantic, lexical],
             weights=[1.0, bundle.lexical_weight],
-            k=k,
+            k=merge_k,
         )
+        return _finalize_retrieval(query, merged, bundle)
     except Exception as exc:
         _debug_print(f"retrieval failed: {type(exc).__name__}: {exc}")
         # Retrieval failure should not block generation; the agent can still answer without context.

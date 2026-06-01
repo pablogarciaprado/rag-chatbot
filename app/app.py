@@ -39,7 +39,7 @@ from app.schemas import (
 )
 
 ENABLE_PRINT_DEBUG = os.getenv("ENABLE_PRINT_DEBUG", "False").lower() == "true"
-NUMBER_OF_SOURCES = int(os.getenv("RAG_NUMBER_OF_SOURCES", "4"))
+NUMBER_OF_SOURCES = int(os.getenv("RAG_FINAL_NUMBER_OF_SOURCES_AFTER_RETRIEVAL", "8"))
 
 # Compute repo root from this file location (`.../app/app.py` -> repo root).
 _REPO_ROOT = Path(__file__).resolve().parent.parent

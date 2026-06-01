@@ -127,7 +127,7 @@ flowchart TB
 
 - **Retrieval runs once per query** in `RagWrapper.get_response()` — the same chunks feed both the LLM prompt and the citation list.
 - **Multi-turn chat** — prior turns go in `history`; only the latest user message drives retrieval.
-- **Hybrid mode (default)** — semantic and BM25 each fetch up to `2×k` candidates, then RRF merges down to `k` (`RAG_NUMBER_OF_SOURCES`, default 4).
+- **Hybrid mode (default)** — semantic and BM25 each fetch up to `2×k` candidates, then RRF merges down to `k` (`RAG_NUMBER_OF_SOURCES`, default 4). With `RAG_RERANK_ENABLED=true`, each branch fetches a wider pool, RRF merges to that pool, then Discovery Engine re-ranks to `k`.
 - **Everything is in-memory** — indexes are rebuilt on each `POST /index`; uploads invalidate the index until re-indexing.
 - **Strict grounding** — `system_prompt.txt` instructs the model to answer only when confident in the retrieved context.
 
@@ -180,6 +180,11 @@ Create a `.env` file at the repository root (or export variables in your shell).
 | `RAG_RETRIEVAL_MODE` | No | `hybrid` | `semantic`, `lexical`, or `hybrid` |
 | `RAG_LEXICAL_WEIGHT` | No | `0.5` | Weight of the BM25 branch in hybrid RRF merge (semantic branch is `1.0`) |
 | `RAG_NUMBER_OF_SOURCES` | No | `4` | Number of chunks to retrieve per query |
+| `RAG_RERANK_ENABLED` | No | `false` | Re-rank first-stage hits with Discovery Engine when `true` |
+| `GOOGLE_CLOUD_PROJECT` | When reranking | — | GCP project id for Discovery Engine Ranking API (ADC auth) |
+| `RAG_RERANK_MODEL` | No | `semantic-ranker-default@latest` | Discovery Engine ranking model |
+| `RAG_RERANK_LOCATION` | No | `global` | Discovery Engine location for the ranking config |
+| `RAG_RERANK_CANDIDATES` | No | `max(2×k, k+4)` | First-stage pool size before re-ranking (max 200) |
 | `ENABLE_PRINT_DEBUG` | No | `False` | Log retrieval and message debug output when `true` |
 | `LOGFIRE_ENABLED` | No | `true` | Send traces to Logfire when `true` |
 | `LOGFIRE_SERVICE_NAME` | No | `rag-chatbot` | Service name shown in Logfire |
@@ -194,6 +199,9 @@ RAG_UPLOADED_DIR=context_files
 RAG_RETRIEVAL_MODE=hybrid
 RAG_LEXICAL_WEIGHT=0.5
 RAG_NUMBER_OF_SOURCES=4
+# Optional Discovery Engine re-ranking (requires ADC: gcloud auth application-default login)
+# RAG_RERANK_ENABLED=true
+# GOOGLE_CLOUD_PROJECT=your-gcp-project-id
 ENABLE_PRINT_DEBUG=false
 ```
 

@@ -23,6 +23,7 @@ dependencies = [
   "streamlit",
   "python-dotenv",
   "rank-bm25>=0.2.2",
+  "google-cloud-discoveryengine>=0.13.0",
 ]
 
 [tool.logfire]
