@@ -156,7 +156,7 @@ def filter_reranked_documents(
     docs: List[Document],
     *,
     min_score: float,
-    gap_ratio: float,
+    gap_ratio: float, # Gap ratio filtering is disabled
 ) -> List[Document]:
     """
     Drop reranked chunks below *min_score* or after a score cliff.
@@ -203,6 +203,7 @@ def filter_reranked_documents(
                 f"keeping the top {len(filtered)}"
             )
             break
+        # Gap ratio filtering is disabled, but the code is kept here for future reference.
         # if gap_ratio > 0 and score < prev_score * gap_ratio:
         #     # A sharp drop (e.g. 28% → 7%) marks the boundary between useful
         #     # context and the long tail of weak first-stage candidates.
