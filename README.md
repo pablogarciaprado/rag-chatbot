@@ -7,7 +7,7 @@ A local FastAPI application that answers questions over your own documents using
 - **Hybrid retrieval** — dense embeddings (semantic) plus BM25 (lexical), merged with Reciprocal Rank Fusion (RRF) by default.
 - **Configurable retrieval** — switch between `semantic`, `lexical`, and `hybrid` modes via environment variables.
 - **Multi-turn chat** — the API accepts conversation history so follow-up questions keep context.
-- **Source citations** — responses include file names and page numbers for retrieved chunks.
+- **Source citations** — responses include file names, page numbers, and reranker confidence (%) when re-ranking is enabled.
 - **Document upload** — index `.docx`, `.pdf`, `.txt`, `.md`, and `.pptx` files.
 - **In-memory index** — simple setup for local development and prototyping (no external vector database).
 
@@ -40,7 +40,7 @@ flowchart TB
         UI3["User asks question<br/>+ conversation history"] -->|POST /query| Q_EP["query()"]
         Q_EP --> RESP["RagWrapper.get_response()"]
         RESP --> OUT["Answer + source citations"]
-        OUT --> UI4["Render reply + source pills"]
+        OUT --> UI4["Render reply + source pills<br/>(file · page · confidence %)"]
     end
 
     START --> UPLOAD
@@ -89,16 +89,22 @@ flowchart TB
     MODE -->|hybrid| LEX2["Lexical branch<br/>fetch 2×k candidates"]
     SEM2 --> RRF["RRF merge<br/>weights: 1.0 semantic · lexical_weight BM25"]
     LEX2 --> RRF
-    RRF --> TOPK["Top-k chunks"]
+    RRF --> TOPK["Top-k candidates"]
     SEM --> TOPK
     LEX --> TOPK
 
-    TOPK --> CITE["documents_to_sources()<br/>dedupe by file + page"]
-    TOPK --> STATE["Agent invoke<br/>state: messages + retrieved_docs"]
+    TOPK --> RERANK["Optional rerank + score filter<br/>src/retrieval/rerank.py"]
+    RERANK --> EMPTY{Chunks after filter?}
+    EMPTY -->|no| NODOCS["Return: no relevant docs<br/>(skip LLM)"]
+    EMPTY -->|yes| FINAL["Final chunks"]
+
+    FINAL --> CITE["documents_to_sources()<br/>dedupe by file + page · confidence_pct"]
+    FINAL --> STATE["Agent invoke<br/>state: messages + retrieved_docs"]
 
     STATE --> PROMPT["Prompt middleware<br/>system_prompt.txt + chunk text"]
     PROMPT --> GEN["Gemini generates answer"]
     GEN --> RES["QueryResponse<br/>answer + sources"]
+    NODOCS --> RES
 ```
 
 ### Component map
@@ -109,7 +115,7 @@ flowchart TB
 | API | `app/app.py`, `app/schemas.py` | Routes: `/`, `/upload`, `/index`, `/index/status`, `/query`, `/health` |
 | Frontend | `frontend/templates/index.html`, `frontend/static/app.js` | Upload UI, index button, multi-turn chat, citation pills |
 | RAG core | `rag/rag.py` | Load → chunk → embed → build agent → `RagWrapper` |
-| Retrieval | `src/retrieval/hybrid.py` | Semantic / lexical / hybrid (RRF) |
+| Retrieval | `src/retrieval/hybrid.py`, `src/retrieval/rerank.py` | Semantic / lexical / hybrid (RRF); optional Discovery Engine rerank and score filtering |
 | Prompt | `src/prompt/prompt_manager.py` | Injects retrieved chunks into system prompt |
 | LLM | `src/llm/gemini.py` | `gemini-2.5-flash-lite` via LangChain |
 
@@ -119,15 +125,17 @@ flowchart TB
 2. **Upload** — UI or `POST /upload` saves supported files to `context_files/`; any existing index is cleared.
 3. **Index** — UI or `POST /index` loads files, chunks them, embeds them, builds BM25 + vector store, and creates the in-memory `RagWrapper`.
 4. **Ask** — UI or `POST /query` sends the question plus prior turns (`history` does not include the current question).
-5. **Retrieve once** — `RagWrapper` runs hybrid/semantic/lexical retrieval on the latest user message.
-6. **Generate** — Retrieved text is injected into the system prompt; the Gemini agent produces the answer.
-7. **Respond** — API returns `{ answer, sources }`; the UI shows source pills (file + page).
+5. **Retrieve once** — `RagWrapper` runs hybrid/semantic/lexical retrieval on the latest user message, optionally reranks and filters by score.
+6. **Generate** — If no chunks pass the score filter, the API returns a fixed “no relevant documents” message without calling the LLM. Otherwise, retrieved text is injected into the system prompt and the Gemini agent produces the answer.
+7. **Respond** — API returns `{ answer, sources }`; the UI shows source pills (`file · p. N · confidence %`).
 
 ### Design notes
 
 - **Retrieval runs once per query** in `RagWrapper.get_response()` — the same chunks feed both the LLM prompt and the citation list.
 - **Multi-turn chat** — prior turns go in `history`; only the latest user message drives retrieval.
-- **Hybrid mode (default)** — semantic and BM25 each fetch up to `2×k` candidates, then RRF merges down to `k` (`RAG_NUMBER_OF_SOURCES`, default 4).
+- **Hybrid mode (default)** — semantic and BM25 each fetch candidates, then RRF merges to a pool. With `RAG_RERANK_ENABLED=true`, Discovery Engine re-ranks that pool, then a score filter trims weak tail hits before chunks reach the LLM and citations.
+- **Rerank score filtering** — after reranking, chunks must pass two rules (configurable via env): an absolute floor (`RAG_RERANK_MIN_SCORE`, default `0.12`) and a gap cutoff (`RAG_RERANK_GAP_RATIO`, default `0.45` — stop when the next score falls below 45% of the previous kept score). If even the top chunk is below the floor, retrieval returns nothing and the user sees *“No relevant documents were found for your question.”*
+- **Citation confidence** — when reranking is on, each source includes `confidence_pct` (rerank score × 100, rounded) in the API and UI.
 - **Everything is in-memory** — indexes are rebuilt on each `POST /index`; uploads invalidate the index until re-indexing.
 - **Strict grounding** — `system_prompt.txt` instructs the model to answer only when confident in the retrieved context.
 
@@ -142,7 +150,7 @@ flowchart TB
 | `rag/` | RAG pipeline — document loading, chunking, vector store, chain lifecycle |
 | `src/llm/` | LLM provider interface and Gemini implementation |
 | `src/prompt/` | Dynamic prompt middleware and `system_prompt.txt` |
-| `src/retrieval/` | Hybrid retrieval (semantic, BM25, RRF merge) |
+| `src/retrieval/` | Hybrid retrieval (semantic, BM25, RRF merge) and Discovery Engine rerank + score filtering |
 | `frontend/` | HTML template and static UI assets |
 | `context_files/` | Uploaded documents used for retrieval (gitignored) |
 
@@ -179,8 +187,20 @@ Create a `.env` file at the repository root (or export variables in your shell).
 | `RAG_UPLOADED_DIR` | No | `context_files/` | Directory for uploaded and indexed documents |
 | `RAG_RETRIEVAL_MODE` | No | `hybrid` | `semantic`, `lexical`, or `hybrid` |
 | `RAG_LEXICAL_WEIGHT` | No | `0.5` | Weight of the BM25 branch in hybrid RRF merge (semantic branch is `1.0`) |
-| `RAG_NUMBER_OF_SOURCES` | No | `4` | Number of chunks to retrieve per query |
+| `RAG_FINAL_NUMBER_OF_SOURCES_AFTER_RETRIEVAL` | No | `8` | Final chunk count after retrieval (passed to `build_rag_chain`) |
+| `RAG_NUMBER_OF_CHUNKS_PER_BRANCH` | No | `16` | Candidates fetched per branch before RRF merge (when rerank is off) |
+| `RAG_RERANK_ENABLED` | No | `false` | Re-rank first-stage hits with Discovery Engine when `true` |
+| `GOOGLE_CLOUD_PROJECT` | When reranking | — | GCP project id for Discovery Engine Ranking API (ADC auth) |
+| `RAG_RERANK_MODEL` | No | `semantic-ranker-default@latest` | Discovery Engine ranking model |
+| `RAG_RERANK_LOCATION` | No | `global` | Discovery Engine location for the ranking config |
+| `RAG_RERANK_CANDIDATES` | No | `max(2×k, k+4)` | First-stage pool size before re-ranking (max 200) |
+| `RAG_RERANK_MIN_SCORE` | No | `0.12` | Drop chunks below this rerank score (0–1); if the top chunk fails, keep none |
+| `RAG_RERANK_GAP_RATIO` | No | `0.45` | Stop keeping chunks when the next score falls below this ratio of the previous kept score; set to `0` to disable |
 | `ENABLE_PRINT_DEBUG` | No | `False` | Log retrieval and message debug output when `true` |
+| `LOGFIRE_ENABLED` | No | `true` | Send traces to Logfire when `true` |
+| `LOGFIRE_SERVICE_NAME` | No | `rag-chatbot` | Service name shown in Logfire |
+| `LOGFIRE_USER_ID` | No | `dev-user` | User id attached to every trace (placeholder until auth exists) |
+| `LOGFIRE_INSTRUMENT_LANGCHAIN` | No | `true` | Export LangChain/LangGraph spans via OpenTelemetry |
 
 Example `.env`:
 
@@ -189,7 +209,14 @@ GOOGLE_API_KEY=your_key_here
 RAG_UPLOADED_DIR=context_files
 RAG_RETRIEVAL_MODE=hybrid
 RAG_LEXICAL_WEIGHT=0.5
-RAG_NUMBER_OF_SOURCES=4
+RAG_FINAL_NUMBER_OF_SOURCES_AFTER_RETRIEVAL=8
+RAG_NUMBER_OF_CHUNKS_PER_BRANCH=16
+# Optional Discovery Engine re-ranking (requires ADC: gcloud auth application-default login)
+# RAG_RERANK_ENABLED=true
+# GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+# RAG_RERANK_CANDIDATES=24
+# RAG_RERANK_MIN_SCORE=0.12
+# RAG_RERANK_GAP_RATIO=0.45
 ENABLE_PRINT_DEBUG=false
 ```
 
@@ -198,6 +225,27 @@ ENABLE_PRINT_DEBUG=false
 - **`semantic`** — embedding similarity only (cosine via in-memory vector store)
 - **`lexical`** — BM25 keyword search only
 - **`hybrid`** — run both, merge ranks with RRF (recommended)
+
+## Observability (Logfire)
+
+The app sends traces to [Logfire](https://logfire.pydantic.dev/) when enabled:
+
+1. Install SDK: `pip install logfire`
+2. Authenticate and select a project: `logfire auth` then `logfire projects use <project>`
+3. Install `pip install uvicorn 'logfire[fastapi]'` and `pip install 'logfire[httpx]'`. `langchain-google-genai` (`ChatGoogleGenerativeAI`, `GoogleGenerativeAIEmbeddings`) uses HTTPX under the hood for chat and embedding calls to Google’s API.
+4. Run the server: `python3 main.py`
+Install with the FastAPI extra: .
+
+What is instrumented:
+
+- **HTTP routes** — `POST /query`, `/index`, `/upload`, etc. (`/health` and `/static/*` are excluded)
+- **Outbound HTTP** — Gemini API calls via HTTPX
+- **LangChain** — agent, retrieval, and LLM spans when `LOGFIRE_INSTRUMENT_LANGCHAIN=true` (default)
+- **User context** — `user_id` on every span via baggage (`dev-user` by default; override with `LOGFIRE_USER_ID`)
+
+Set `LOGFIRE_ENABLED=false` to disable sending traces without removing the dependency.
+
+Filter by user in Logfire Live view: `attributes->>'user_id' = 'dev-user'`
 
 ## Run
 
@@ -285,8 +333,24 @@ Ask a question over the indexed documents.
 {
   "answer": "Refunds are available within 30 days...",
   "sources": [
-    { "file": "policy.pdf", "path": "/path/to/context_files/policy.pdf", "page": 3 }
+    {
+      "file": "policy.pdf",
+      "path": "/path/to/context_files/policy.pdf",
+      "page": 3,
+      "confidence_pct": 87
+    }
   ]
+}
+```
+
+`confidence_pct` is present when re-ranking is enabled (Discovery Engine score × 100, rounded). Omitted when reranking is off.
+
+When no chunks pass the rerank score filter, the response is:
+
+```json
+{
+  "answer": "No relevant documents were found for your question.",
+  "sources": []
 }
 ```
 
@@ -297,7 +361,7 @@ Ask a question over the indexed documents.
 3. Upload documents in the UI (or call `POST /upload`)
 4. Click **Index documents** (or call `POST /index`)
 5. Ask questions in the chat UI or via `POST /query`
-6. Inspect source pills under each assistant reply
+6. Inspect source pills under each assistant reply (file, optional page, optional confidence %)
 
 ## Limitations
 
@@ -313,11 +377,13 @@ Ask a question over the indexed documents.
 The system prompt is very strict and mandates the llm to answer only when it's 100% sure. In Hybrid mode, **the problem could come from how the retrieved sources are ranked, scored, and merged**. If the query mentions a very specfic keyword, the lexical branch would probably have the better passages, but they might get ignored after narrowing down the final number of sources during RRF for two main reasons:
 
 - The semantic branch is set to prevail by default over the lexical one during RRF, because `RAG_LEXICAL_WEIGHT=0.5`.
-- The number of sources in `RAG_NUMBER_OF_SOURCES` is too low, and the relevant information is ranked poorly, but close to the `RAG_NUMBER_OF_SOURCES`, so they are ignored.
+- The number of sources in `RAG_FINAL_NUMBER_OF_SOURCES_AFTER_RETRIEVAL` is too low, and the relevant information is ranked poorly, but close to the cutoff, so it is ignored.
 
 #### Practical fixes
 
-- Raise `RAG_NUMBER_OF_SOURCES` so poorly runked, but relevant chunks can enter the pool.
+- Raise `RAG_FINAL_NUMBER_OF_SOURCES_AFTER_RETRIEVAL` so poorly ranked, but relevant chunks can enter the pool.
 - Raise `RAG_LEXICAL_WEIGHT` (e.g. 1.0 or higher) so BM25 matches for proper names compete fairly in RRF.
-- Retrieve more per branch before merging (e.g. 2k or 3k from each, then RRF down to k).
+- Retrieve more per branch before merging (raise `RAG_NUMBER_OF_CHUNKS_PER_BRANCH` or `RAG_RERANK_CANDIDATES`, then RRF/rerank down to k).
+- If answers cite weak sources, tighten `RAG_RERANK_MIN_SCORE` or lower `RAG_RERANK_GAP_RATIO` so low-confidence tail chunks are dropped before the LLM prompt.
+- If valid queries return *“No relevant documents were found”*, lower `RAG_RERANK_MIN_SCORE` or set `RAG_RERANK_GAP_RATIO=0` to disable the cliff cutoff.
 - Detect keyword names in the query and boost lexical-only or filter chunks containing those tokens. This could be done depending on the keyword topic, and providing a curated list of those entities.
