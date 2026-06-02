@@ -41,6 +41,8 @@ load_dotenv(dotenv_path=str(_REPO_ROOT / ".env"), override=False)
 
 SUPPORTED_EXTENSIONS = {".docx", ".pdf", ".txt", ".md", ".pptx"}
 
+NO_RELEVANT_DOCS_MESSAGE = "No relevant documents were found for your question."
+
 
 def get_uploaded_dir() -> Path:
     """Return the upload directory, resolving relative paths against the repo root."""
@@ -228,6 +230,8 @@ class RagWrapper:
         """
         query = _last_user_content(messages)
         retrieved = retrieve_documents(query=query, bundle=self._retriever) if query else []
+        if query and not retrieved:
+            return NO_RELEVANT_DOCS_MESSAGE, []
         sources = documents_to_sources(retrieved)
 
         payload: Dict[str, Any] = {

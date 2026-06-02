@@ -57,6 +57,28 @@ def _parse_rerank_candidates() -> int:
         return 0
 
 
+def _parse_env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, str(default)).strip().split("#", 1)[0].strip()
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def get_rerank_filter_config() -> tuple[float, float]:
+    """
+    Resolve post-rerank score filtering from the environment.
+
+    Returns:
+        (min_score, gap_ratio) — both in [0, 1]. Documents below *min_score*
+        are dropped; scanning stops when the next score falls below
+        *gap_ratio* × the previous kept score.
+    """
+    min_score = max(0.0, min(1.0, _parse_env_float("RAG_RERANK_MIN_SCORE", 0.12)))
+    gap_ratio = max(0.0, min(1.0, _parse_env_float("RAG_RERANK_GAP_RATIO", 0.45)))
+    return min_score, gap_ratio
+
+
 def get_rerank_config() -> tuple[bool, str, str, str, int]:
     """
     Resolve re-ranking settings from the environment.
@@ -129,6 +151,75 @@ def _record_title(doc: Document) -> str:
         return f"{name} (page {raw_page + 1})"
     return name
 
+
+def filter_reranked_documents(
+    docs: List[Document],
+    *,
+    min_score: float,
+    gap_ratio: float,
+) -> List[Document]:
+    """
+    Drop reranked chunks below *min_score* or after a score cliff.
+
+    The top chunk must meet *min_score*; otherwise nothing is kept. Each
+    subsequent chunk must also meet *min_score* and stay at or above
+    *gap_ratio* × the previous kept score.
+    """
+    if not docs:
+        return []
+
+    filtered: List[Document] = []
+    for doc in docs:
+        score = (doc.metadata or {}).get("rerank_score")
+        if not isinstance(score, (int, float)):
+            # Rerank was skipped or failed for this chunk; without a score we
+            # can't apply thresholds, so keep first-stage order as a fallback.
+            filtered.append(doc)
+            continue
+
+        if not filtered:
+            # The best available match sets the bar: if even #1 is below
+            # min_score, nothing in the pool is trustworthy enough to ground
+            # an answer, so return [] and let the caller say "no relevant docs".
+            if score < min_score:
+                _debug_print(
+                    f"filter: top score {score:.4f} < min {min_score:.4f}; keeping 0"
+                )
+                return []
+            filtered.append(doc)
+            continue
+
+        prev_score = (filtered[-1].metadata or {}).get("rerank_score")
+        if not isinstance(prev_score, (int, float)):
+            # Mixed scored/unscored list (shouldn't happen in normal flow);
+            # keep going rather than drop evidence we can't compare.
+            filtered.append(doc)
+            continue
+
+        if score < min_score:
+            # Scores are descending; once we hit the floor, the rest will too.
+            _debug_print(
+                f"[filter] score {score:.4f} < min {min_score:.4f} for {doc.metadata.get("title")}; "
+                f"keeping the top {len(filtered)}"
+            )
+            break
+        # if gap_ratio > 0 and score < prev_score * gap_ratio:
+        #     # A sharp drop (e.g. 28% → 7%) marks the boundary between useful
+        #     # context and the long tail of weak first-stage candidates.
+        #     _debug_print(
+        #         f"filter: score {score:.4f} < {gap_ratio:.0%} of prev "
+        #         f"{prev_score:.4f}; keeping {len(filtered)}"
+        #     )
+        #     break
+        filtered.append(doc)
+
+    if _debug_enabled() and len(filtered) != len(docs):
+        _debug_print(
+            f"[filter] From {len(docs)} to {len(filtered)} "
+            f"(min_score={min_score:.4f}, gap_ratio={gap_ratio:.2f})"
+        )
+
+    return filtered
 
 def rerank_documents(
     query: str,
@@ -239,4 +330,19 @@ def rerank_documents(
     if not ranked:
         _debug_print("Warning: reranked 0 documents; keeping retrieval order")
 
-    return ranked if ranked else docs[:top_n]
+    result = ranked if ranked else docs[:top_n]
+    if result and any(
+        isinstance((doc.metadata or {}).get("rerank_score"), (int, float))
+        for doc in result
+    ):
+        min_score, gap_ratio = get_rerank_filter_config()
+        result = filter_reranked_documents(
+            result,
+            min_score=min_score,
+            gap_ratio=gap_ratio,
+        )
+
+    (_debug_print(f"Final set of reranked documents: \n\t{doc.metadata.get("title")} ({doc.metadata.get("rerank_score") * 100}%)") 
+        for doc in result if _debug_enabled())
+
+    return result
