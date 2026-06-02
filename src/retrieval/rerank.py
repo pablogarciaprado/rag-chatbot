@@ -222,6 +222,7 @@ def rerank_documents(
         if doc is None:
             continue
         meta = dict(doc.metadata or {})
+        # Add rerank score to the metadata of the document.
         meta["rerank_score"] = record.score
         ranked.append(Document(page_content=doc.page_content, metadata=meta))
 

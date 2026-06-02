@@ -394,16 +394,23 @@ def documents_to_sources(docs: List[Document]) -> List[dict]:
         key = (source_path, page)
         if key not in seen:
             seen.add(key)
-            sources.append({
+            row: dict = {
                 "file": Path(source_path).name if source_path else "Unknown",
                 "path": source_path,
                 "page": page,
-            })
+            }
+            # Add rerank score to the source if it exists.
+            ## This confidence score is returned by the reranker model.
+            rerank_score = meta.get("rerank_score")
+            if isinstance(rerank_score, (int, float)):
+                row["confidence_pct"] = round(float(rerank_score) * 100)
+            sources.append(row)
 
     if _debug_enabled():
         _debug_print(f"citations -> {len(sources)} unique source(s) from {len(docs)} chunk(s)")
         for i, src in enumerate(sources):
             page = f" p.{src['page']}" if src.get("page") else ""
-            _debug_print(f"  cite #{i + 1} {src['file']}{page}")
+            conf = f" {src['confidence_pct']}%" if src.get("confidence_pct") is not None else ""
+            _debug_print(f"  cite #{i + 1} {src['file']}{page}{conf}")
 
     return sources

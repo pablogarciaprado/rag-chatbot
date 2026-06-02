@@ -65,6 +65,7 @@ function appendMessage(role, content, sources = []) {
         const pillText = document.createElement("span");
         let label = src.file || src.path || "Unknown";
         if (src.page != null) label += ` · p. ${src.page}`;
+        if (src.confidence_pct != null) label += ` · ${src.confidence_pct}%`;
         pillText.textContent = label;
         pill.appendChild(pillText);
 

@@ -31,6 +31,7 @@ class Source(BaseModel):
     file: str
     path: str
     page: Optional[int] = None
+    confidence_pct: Optional[int] = None
 
 
 class QueryResponse(BaseModel):
