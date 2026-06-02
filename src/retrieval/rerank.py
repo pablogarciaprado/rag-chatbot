@@ -342,7 +342,14 @@ def rerank_documents(
             gap_ratio=gap_ratio,
         )
 
-    (_debug_print(f"Final set of reranked documents: \n\t{doc.metadata.get("title")} ({doc.metadata.get("rerank_score") * 100}%)") 
-        for doc in result if _debug_enabled())
+    if _debug_enabled() and result:
+        _debug_print("Final set of reranked documents:")
+        for doc in result:
+            score = (doc.metadata or {}).get("rerank_score")
+            if isinstance(score, (int, float)):
+                score_text = f"{round(score * 100)}%"
+            else:
+                score_text = "n/a"
+            _debug_print(f"  {_record_title(doc)} ({score_text})")
 
     return result
