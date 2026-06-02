@@ -128,7 +128,38 @@ def _load_documents() -> List[Any]:
     return documents
 
 def _split_documents(documents: List[Any]) -> List[Any]:
-    """Split documents into overlapping chunks."""
+    """
+    Split documents into overlapping chunks.
+
+    ``chunk_size`` and ``chunk_overlap`` are in **characters** (LangChain's default
+    ``len``), not tokens. Tune both together when changing either.
+
+    The same chunk objects are embedded, indexed for BM25, optionally re-ranked,
+    and injected into the LLM prompt. Size choices therefore affect every stage:
+
+    - **Discovery Engine re-rank** (when ``RAG_RERANK_ENABLED``): each record is
+      title + ``page_content``; semantic-ranker models allow ~1024 tokens total
+      (title + content). Content beyond that is truncated by the API—only ranking
+      suffers; retrieved chunks passed to the model stay full-length.
+    - **LLM context**: ``k`` retrieved chunks are appended in full in
+      ``build_system_prompt``; this limit is independent of the reranker window.
+    - **Retrieval**: smaller chunks improve pinpoint matches; larger chunks keep
+      more local context but increase overlap redundancy across hits.
+
+    Defaults (1000 / 200) keep typical English prose (~250–400 tokens per chunk
+    plus a short filename title) safely under the rerank token cap. Dense text
+    (code, JSON, tables) uses more tokens per character—stay conservative or
+    measure before raising ``chunk_size`` much above ~2000 characters.
+
+    ``add_start_index=True`` stores byte offsets in metadata for stable chunk
+    identity during hybrid merge and citation deduplication.
+
+    Args:
+        documents: List[Any] - The documents to split into chunks.
+
+    Returns:
+        List[Any] - The chunks.
+    """
     from langchain_text_splitters import RecursiveCharacterTextSplitter
 
     text_splitter = RecursiveCharacterTextSplitter(

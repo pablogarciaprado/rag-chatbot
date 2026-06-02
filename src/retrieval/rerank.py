@@ -237,7 +237,5 @@ def rerank_documents(
 
     if not ranked:
         _debug_print("Warning: reranked 0 documents; keeping retrieval order")
-    else:
-        _debug_print(f"ranked:", ranked)
 
     return ranked if ranked else docs[:top_n]
